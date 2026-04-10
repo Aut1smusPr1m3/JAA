@@ -8,9 +8,26 @@ Check:
 
 ## Ironing not behaving as expected
 Check:
-1. Input G-code contains slicer `;TYPE:` markers.
+1. OrcaSlicer `Verbose G-code` is enabled so `; FEATURE:` and inline `; ironing` comments are preserved.
 2. Stage 2 actually executed (not skipped).
 3. Output after Stage 3 may not keep comments (ArcWelder strips comments).
+
+## Arc behavior is unexpected
+Check:
+1. OrcaSlicer `Arc fitting` is disabled.
+2. Arc conversion is expected to happen in Stage 3 via ArcWelder.
+
+## Wrong interpreter / missing modules at runtime
+Check:
+1. OrcaSlicer is using the same virtual environment interpreter as your validated setup.
+2. Running `python Ultra_Optimizer.py input.gcode` from that venv succeeds.
+3. Required dependencies in that venv are installed (`requirements.txt`, optional `requirements-optional.txt` if needed).
+
+## Smoothing looks too aggressive or too weak
+Check:
+1. `DEFAULT_MAX_SMOOTHING_ANGLE` in `GCodeZAA/gcodezaa/config.py` matches your printer clearance constraints.
+2. Remember the hard safety cap is `20deg`.
+3. Re-run a supervised test print after changing the angle.
 
 ## Stage 2 skipped
 Common reasons:

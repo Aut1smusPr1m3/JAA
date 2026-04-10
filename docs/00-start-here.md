@@ -17,6 +17,12 @@ This documentation matches the current repository behavior.
 - Stage 2 runs only when GCodeZAA is importable and STL files exist in `stl_models/`.
 - Stage 3 runs only when `ArcWelder.exe` exists next to `Ultra_Optimizer.py`.
 
+## Critical warnings
+- Run the post-processor in the correct virtual environment. Using a different Python interpreter is a common cause of missing dependency behavior.
+- Enable verbose G-code output in OrcaSlicer so feature/ironing comments are preserved.
+- Disable Arc fitting in OrcaSlicer. Let Stage 3 (ArcWelder) handle arc conversion.
+- Verify and tune `MAX_SMOOTHING_ANGLE` for your specific printer clearance.
+
 ## Source of truth files
 - `Ultra_Optimizer.py`
 - `GCodeZAA/gcodezaa/process.py`

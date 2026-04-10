@@ -39,6 +39,12 @@ Windows all-in-one bootstrap:
 python -m pytest -q
 ```
 
+## Critical warnings
+- Run the script from the correct project virtual environment. If OrcaSlicer calls a different Python interpreter, dependencies can be missing and Stage 2 can silently degrade/skip.
+- In OrcaSlicer, enable verbose G-code comments. Feature/comment markers are required for reliable detection of ironing and feature transitions.
+- In OrcaSlicer, disable Arc fitting. Arc conversion should be handled by the pipeline (Stage 3 / ArcWelder), not by the slicer.
+- Set `MAX_SMOOTHING_ANGLE` for your printer's clearance limits. Default is conservative (`15deg`, hard-capped at `20deg`) but should still be validated for your nozzle/duct geometry.
+
 ## Performance tuning
 If Stage 2 raycasting is too slow on large files, tune sampling and profiling with env vars:
 
@@ -71,3 +77,4 @@ For GPU acceleration, use an Open3D build/runtime with SYCL support and availabl
 - ArcWelder integration requires ArcWelder.exe in repository root.
 - Runtime logs are written to `kinematic_engine.log`.
 - Smoothing safety is conservative by default: `15deg` from vertical, hard-capped at `20deg`.
+- `MAX_SMOOTHING_ANGLE` is defined by `DEFAULT_MAX_SMOOTHING_ANGLE` in `GCodeZAA/gcodezaa/config.py`.

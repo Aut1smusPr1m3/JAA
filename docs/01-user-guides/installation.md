@@ -13,6 +13,13 @@
 - `requirements-dev.txt`: developer tooling and test dependencies.
 
 ## Install
+Create and activate a virtual environment first:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Then install dependencies:
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -54,3 +61,6 @@ Open3D is optional, but required for full Stage 2 STL raycasting quality workflo
 If Open3D is missing:
 - core processing still works,
 - Stage 2 raycasting is skipped/fallback behavior is used.
+
+## Critical warning
+- Always run `Ultra_Optimizer.py` from this same activated virtual environment. If OrcaSlicer invokes a different Python interpreter, behavior can differ from terminal tests.

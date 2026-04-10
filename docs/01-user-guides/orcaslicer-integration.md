@@ -6,6 +6,14 @@ Configure OrcaSlicer to run:
 
 OrcaSlicer passes the generated G-code path as argument to the script.
 
+## Required OrcaSlicer settings
+- Enable `Verbose G-code` so feature comments (for example `; FEATURE: Ironing` and `; ironing`) are present.
+- Disable `Arc fitting` in OrcaSlicer. Arc conversion should be done by Stage 3 (`ArcWelder.exe`) to avoid double-processing.
+
+## Python interpreter warning
+- OrcaSlicer must execute the script with the same project virtual environment used during setup.
+- If needed, point OrcaSlicer to the venv interpreter explicitly (for example `.venv/bin/python`).
+
 ## Expected behavior
 - Script validates input G-code.
 - Stage 1 kinematic optimization always runs.

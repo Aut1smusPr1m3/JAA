@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Updated README and user docs with critical operational warnings:
+  - run in the correct virtual environment,
+  - enable verbose G-code in OrcaSlicer,
+  - disable OrcaSlicer Arc fitting,
+  - verify and tune `MAX_SMOOTHING_ANGLE` for printer-specific clearance.
+
+### Validation
+- `python -m pytest -q`
+
 ## v0.2.1-alpha.6 - Documentation alignment release
 
 ### Changed

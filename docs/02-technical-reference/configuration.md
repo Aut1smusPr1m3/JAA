@@ -17,6 +17,12 @@
 - Stage 1 does not perform heuristic Z-AA; only Stage 2 true surface following applies Z offsets.
 - Stage 2 behavior depends on GCodeZAA/Open3D availability and STL presence.
 
+### MAX_SMOOTHING_ANGLE tuning
+- Source setting: `DEFAULT_MAX_SMOOTHING_ANGLE` in `GCodeZAA/gcodezaa/config.py`.
+- Runtime effective value: `ZAA_MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, 20.0)`.
+- Recommendation: start at `15deg` and tune conservatively based on nozzle/cooling-duct clearance on your printer.
+- Warning: larger values can increase collision risk on steep local geometry.
+
 ## Operational toggles
 - `ENABLE_ARC_ANALYSIS`
 - `GCODEZAA_AVAILABLE` (runtime import detection)
