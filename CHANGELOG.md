@@ -21,6 +21,8 @@
   - clamp-warning coverage for segment-limit sanitization,
   - Stage 2 env snapshot rendering coverage,
   - G92 and arc priming continuity coverage.
+- Development helper for release readiness evidence capture:
+  - `scripts/perf/capture_stage2_evidence.sh`
 
 ### Validation
 - `python -m pytest -q`
