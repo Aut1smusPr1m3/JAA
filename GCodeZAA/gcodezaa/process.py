@@ -17,6 +17,43 @@ logger = logging.getLogger(__name__)
 
 PRINT_OBJECT_START_RE = re.compile(r"^\s*;\s*printing object\b", re.IGNORECASE)
 PRINT_OBJECT_STOP_RE = re.compile(r"^\s*;\s*stop printing object\b", re.IGNORECASE)
+COMMENT_FEATURE_RE = re.compile(r"^\s*(?:TYPE|FEATURE)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+INLINE_FEATURE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^\s*ironing\b", re.IGNORECASE), "ironing"),
+    (re.compile(r"^\s*top\s+surface\b", re.IGNORECASE), "top surface"),
+    (re.compile(r"^\s*outer\s+wall\b", re.IGNORECASE), "outer wall"),
+    (re.compile(r"^\s*inner\s+wall\b", re.IGNORECASE), "inner wall"),
+    (re.compile(r"^\s*infill\b", re.IGNORECASE), "infill"),
+    (re.compile(r"^\s*perimeter\b", re.IGNORECASE), "perimeter"),
+]
+
+
+def _normalize_line_type(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _detect_line_type_from_line(line: str, syntax: SlicerSyntax) -> str | None:
+    """Extract semantic line-type from explicit markers or inline move comments."""
+    marker_prefix = syntax.line_type
+    if marker_prefix and line.startswith(marker_prefix):
+        return _normalize_line_type(line.removeprefix(marker_prefix).strip())
+
+    if ";" not in line:
+        return None
+
+    comment = line.split(";", 1)[1].strip()
+    if not comment:
+        return None
+
+    feature_match = COMMENT_FEATURE_RE.match(comment)
+    if feature_match:
+        return _normalize_line_type(feature_match.group(1))
+
+    for pattern, canonical in INLINE_FEATURE_PATTERNS:
+        if pattern.match(comment):
+            return canonical
+
+    return None
 
 
 def _normalize_device_spec(spec: str) -> str:
@@ -69,12 +106,13 @@ def detect_processing_window(gcode: list[str], syntax: SlicerSyntax) -> tuple[in
 
 def _prime_context_state_for_line(ctx: ProcessorContext, line: str) -> None:
     """Update context motion/extrusion state without modifying line content."""
-    if line.startswith(ctx.syntax.line_type):
-        ctx.line_type = line.removeprefix(ctx.syntax.line_type).strip()
-        return
+    detected_line_type = _detect_line_type_from_line(line, ctx.syntax)
+    if detected_line_type is not None:
+        ctx.line_type = detected_line_type
+
     if line.startswith(ctx.syntax.layer_change):
         ctx.layer += 1
-        ctx.line_type = ctx.syntax.line_type_inner_wall
+        ctx.line_type = _normalize_line_type(ctx.syntax.line_type_inner_wall)
         return
     if line.startswith(ctx.syntax.z):
         ctx.z = clamp_buildplate_z(float(line.removeprefix(ctx.syntax.z)))
@@ -563,6 +601,10 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
     ctx.extrusion = []
     ctx.gcode[ctx.gcode_line] = ctx.line.strip() + "\n"
 
+    detected_line_type = _detect_line_type_from_line(ctx.line, ctx.syntax)
+    if detected_line_type is not None:
+        ctx.line_type = detected_line_type
+
     if ctx.line.startswith("G0 ") or ctx.line.startswith("G1 "):
         args = parse_simple_args(ctx.line)
         
@@ -707,11 +749,9 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                     )
                 )
     
-    elif ctx.line.startswith(ctx.syntax.line_type):
-        ctx.line_type = ctx.line.removeprefix(ctx.syntax.line_type).strip()
     elif ctx.line.startswith(ctx.syntax.layer_change):
         ctx.layer += 1
-        ctx.line_type = ctx.syntax.line_type_inner_wall
+        ctx.line_type = _normalize_line_type(ctx.syntax.line_type_inner_wall)
     elif ctx.line.startswith(ctx.syntax.z):
         ctx.z = clamp_buildplate_z(float(ctx.line.removeprefix(ctx.syntax.z)))
     elif ctx.line.startswith(ctx.syntax.height):
@@ -765,13 +805,19 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         and ctx.extrusion[0].e is not None
         and (ctx.extrusion[0].x is not None or ctx.extrusion[0].y is not None)
     ):
+        line_type = _normalize_line_type(ctx.line_type)
+        ironing_type = _normalize_line_type(ctx.syntax.line_type_ironing)
+        top_surface_type = _normalize_line_type(ctx.syntax.line_type_top_surface)
+        outer_wall_type = _normalize_line_type(ctx.syntax.line_type_outer_wall)
+        inner_wall_type = _normalize_line_type(ctx.syntax.line_type_inner_wall)
+
         # TRUE NON-PLANAR IRONING: Use surface-following path
         if ZAA_NONPLANAR_IRONING and (
-            ctx.line_type == ctx.syntax.line_type_ironing
-            or (ZAA_GENERATE_IRONING and ctx.line_type in (
-                ctx.syntax.line_type_top_surface,
-                ctx.syntax.line_type_outer_wall,
-                ctx.syntax.line_type_inner_wall,
+            line_type == ironing_type
+            or (ZAA_GENERATE_IRONING and line_type in (
+                top_surface_type,
+                outer_wall_type,
+                inner_wall_type,
             ))
         ):
             ironing_path = surface_analyzer.get_nonplanar_ironing_path(
@@ -795,8 +841,8 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                 ctx.active_object,
                 z=ctx.z,
                 height=float(ctx.config_block["layer_height"]),
-                ironing_line=ctx.line_type == ctx.syntax.line_type_ironing,
-                outer_line=ctx.line_type == ctx.syntax.line_type_outer_wall,
+                ironing_line=line_type == ironing_type,
+                outer_line=line_type == outer_wall_type,
                 demo_split=None,
             )
             if any(map(lambda extrusion: extrusion.z != ctx.z, contour)):

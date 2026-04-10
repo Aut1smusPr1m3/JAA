@@ -84,6 +84,15 @@ PRINT_OBJECT_START_RE = re.compile(r'^\s*;\s*printing object\b', re.IGNORECASE)
 PRINT_OBJECT_STOP_RE = re.compile(r'^\s*;\s*stop printing object\b', re.IGNORECASE)
 EXECUTABLE_BLOCK_START_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_START\b', re.IGNORECASE)
 EXECUTABLE_BLOCK_END_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_END\b', re.IGNORECASE)
+COMMENT_FEATURE_RE = re.compile(r'^\s*(?:TYPE|FEATURE)\s*:\s*(.+?)\s*$', re.IGNORECASE)
+INLINE_FEATURE_PATTERNS = [
+    (re.compile(r'^\s*ironing\b', re.IGNORECASE), 'ironing'),
+    (re.compile(r'^\s*top\s+surface\b', re.IGNORECASE), 'top surface'),
+    (re.compile(r'^\s*outer\s+wall\b', re.IGNORECASE), 'outer wall'),
+    (re.compile(r'^\s*inner\s+wall\b', re.IGNORECASE), 'inner wall'),
+    (re.compile(r'^\s*infill\b', re.IGNORECASE), 'infill'),
+    (re.compile(r'^\s*perimeter\b', re.IGNORECASE), 'perimeter'),
+]
 
 # --- G2/G3 ARC COMMAND SUPPORT ---
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
@@ -371,42 +380,57 @@ def select_primary_stl_model(model_dir):
 
 def detect_ironing_sections(gcode_lines):
     """
-    Detect ironing sections in G-code based on slicer TYPE comments.
+    Detect ironing sections from slicer feature comments and inline move comments.
     
     Returns: List of (start_idx, end_idx) tuples for each ironing section
     
     Supported markers:
-    - OrcaSlicer: ;TYPE:Ironing
-    - PrusaSlicer: ;TYPE:Ironing
-    - Cura: ;TYPE:Ironing (basic support)
+    - ;TYPE:Ironing or ;FEATURE: Ironing
+    - Inline move comments such as '; ironing'
     """
+    def detect_line_type(line):
+        if ';' not in line:
+            return None
+
+        comment = line.split(';', 1)[1].strip()
+        if not comment:
+            return None
+
+        match = COMMENT_FEATURE_RE.match(comment)
+        if match:
+            return match.group(1).strip().lower()
+
+        for pattern, canonical in INLINE_FEATURE_PATTERNS:
+            if pattern.match(comment):
+                return canonical
+
+        return None
+
     ironing_sections = []
     in_ironing = False
     ironing_start = None
-    
+
     for i, line in enumerate(gcode_lines):
-        # Check for TYPE comments
-        if ';TYPE:' in line:
-            line_type = line.split(';TYPE:')[1].split('\n')[0].strip()
-            
-            if line_type.lower() == 'ironing':
-                if not in_ironing:
-                    # Start of ironing section
-                    in_ironing = True
-                    ironing_start = i
-            else:
-                if in_ironing:
-                    # End of ironing section (new type encountered)
-                    in_ironing = False
-                    if ironing_start is not None:
-                        ironing_sections.append((ironing_start, i))
-                        logging.debug(f"[IRONING] Detected section: lines {ironing_start}-{i}")
-    
-    # Handle case where ironing extends to end of file
+        line_type = detect_line_type(line)
+        if line_type is None:
+            continue
+
+        if line_type == 'ironing':
+            if not in_ironing:
+                in_ironing = True
+                ironing_start = i
+            continue
+
+        if in_ironing:
+            in_ironing = False
+            if ironing_start is not None:
+                ironing_sections.append((ironing_start, i))
+                logging.debug(f"[IRONING] Detected section: lines {ironing_start}-{i}")
+
     if in_ironing and ironing_start is not None:
         ironing_sections.append((ironing_start, len(gcode_lines)))
         logging.debug(f"[IRONING] Detected section at end: lines {ironing_start}-{len(gcode_lines)}")
-    
+
     return ironing_sections
 
 

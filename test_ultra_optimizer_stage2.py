@@ -7,6 +7,7 @@ from Ultra_Optimizer import (
     _hash_file,
     _hash_text_lines,
     build_stage2_metadata,
+    detect_ironing_sections,
     enforce_stage1_success_or_raise,
     invalidate_stale_sidecar,
     load_sidecar_metadata,
@@ -283,3 +284,19 @@ def test_validate_sidecar_metadata_with_crlf_file_uses_on_disk_hash(tmp_path: Pa
     valid, msg = validate_sidecar_metadata(str(gcode_file), metadata)
     assert valid is True
     assert msg == "ok"
+
+
+def test_detect_ironing_sections_with_feature_and_inline_comments():
+    lines = [
+        "M205 X15 Y15 Z0.8 E2 ; adjust jerk\n",
+        "; FEATURE: Ironing\n",
+        "G1 F2100\n",
+        "G1 X72.658 Y130.688 E.00078 ; ironing\n",
+        "G1 X72.505 Y130.662 E.00019 ; ironing\n",
+        "G1 X70.582 Y131.053 E.00019 ; ironing\n",
+        "; FEATURE: Internal solid infill\n",
+        "G1 X67.37 Y125.569 E.00681 ; infill | Old Flow Value: 0.01161 Length: 0.35570\n",
+    ]
+
+    sections = detect_ironing_sections(lines)
+    assert sections == [(1, 6)]

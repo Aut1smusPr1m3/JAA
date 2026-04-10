@@ -6,6 +6,8 @@ import sys
 sys.path.insert(0, "GCodeZAA")
 
 from gcodezaa.process import process_gcode
+from gcodezaa.process import _detect_line_type_from_line
+from gcodezaa.slicer_syntax import Slicer, SlicerSyntax
 
 
 def test_process_gcode_with_header_succeeds():
@@ -67,3 +69,20 @@ def test_process_gcode_without_executable_markers_succeeds():
 
     assert len(result) == len(gcode_without_markers)
     assert result[0] == gcode_without_markers[0]
+
+
+def test_detect_line_type_from_line_handles_feature_and_inline_ironing_comments():
+    syntax = SlicerSyntax(Slicer.BAMBU)
+
+    assert _detect_line_type_from_line("; FEATURE: Ironing\n", syntax) == "ironing"
+    assert _detect_line_type_from_line("G1 X72.658 Y130.688 E.00078 ; ironing\n", syntax) == "ironing"
+    assert _detect_line_type_from_line(
+        "G1 X67.37 Y125.569 E.00681 ; infill | Old Flow Value: 0.01161 Length: 0.35570\n",
+        syntax,
+    ) == "infill"
+
+
+def test_detect_line_type_from_line_handles_type_marker_for_orca():
+    syntax = SlicerSyntax(Slicer.ORCA)
+
+    assert _detect_line_type_from_line(";TYPE:Ironing\n", syntax) == "ironing"
