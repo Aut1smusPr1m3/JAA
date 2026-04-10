@@ -156,6 +156,40 @@ def test_analyze_segment_batch_logs_implausible_skip_path(caplog):
     assert "Segment sampling capped" not in caplog.text
 
 
+def test_analyze_segment_batch_logs_implausible_skip_with_label(caplog):
+    caplog.set_level("WARNING")
+    analyzer = SurfaceAnalyzer(None)
+
+    analysis = analyzer.analyze_segment_batch(
+        x1=0.0,
+        y1=0.0,
+        z=0.2,
+        x2=6000.0,
+        y2=0.0,
+        layer_height=0.2,
+        sample_distance=0.2,
+        segment_label="line=42 cmd=G1 X6000 Y0 E1.0",
+    )
+
+    assert analysis == []
+    assert "[line=42 cmd=G1 X6000 Y0 E1.0]" in caplog.text
+
+
+def test_process_line_logs_state_jump_candidate_context(caplog):
+    caplog.set_level("WARNING")
+    analyzer = SurfaceAnalyzer(object())
+
+    ctx = _context_for_line("G1 X6000.0 Y0.0 E4.0 F1800\n")
+    ctx.relative_extrusion = False
+    ctx.last_e = 3.0
+
+    process_line(ctx, analyzer)
+
+    assert "Surface-follow state jump candidate at line 1" in caplog.text
+    assert "relative_positioning=False" in caplog.text
+    assert "relative_extrusion=False" in caplog.text
+
+
 def test_surface_follow_segment_limit_sanitization_bounds():
     assert surface_analysis._sanitize_surface_follow_segment_limit(1.0) == 10.0
     assert surface_analysis._sanitize_surface_follow_segment_limit(1000.0) == 1000.0

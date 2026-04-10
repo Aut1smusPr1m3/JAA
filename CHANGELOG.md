@@ -13,6 +13,7 @@
   - added explicit raycast device resolution info logging,
   - clamped `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` to a safe runtime range (`10..5000`),
   - fixed pre-window `G2/G3` context priming to respect `G90/G91` mode.
+  - added contextual implausible-segment diagnostics with process line/cmd metadata to speed up state-jump root-cause analysis.
 
 ### Added
 - Regression and evidence tests for incident-class diagnostics:

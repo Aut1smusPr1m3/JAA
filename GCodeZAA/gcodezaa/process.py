@@ -1,6 +1,6 @@
 from gcodezaa.context import ProcessorContext
 from gcodezaa.extrusion import Extrusion, decompose_arc
-from gcodezaa.surface_analysis import SurfaceAnalyzer
+from gcodezaa.surface_analysis import MAX_SURFACE_FOLLOW_SEGMENT_MM, SurfaceAnalyzer
 from gcodezaa.config import MIN_BUILDPLATE_Z
 from gcodezaa.slicer_syntax import SlicerSyntax
 import os
@@ -638,13 +638,36 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
             and surface_analyzer.scene is not None
             and target_x is not None
             and target_y is not None
-            and (target_x != ctx.last_p[0] or target_y != ctx.last_p[1])):
+            and (target_x != ctx.last_p[0] or target_y != ctx.last_p[1])
+        ):
+            segment_label = f"line={ctx.gcode_line + 1} cmd={ctx.line.split(';', 1)[0].strip()}"
             # Batch analyze the segment
             segment_analysis = surface_analyzer.analyze_segment_batch(
-                ctx.last_p[0], ctx.last_p[1], target_z if target_z is not None else ctx.last_p[2],
-                target_x, target_y,
-                layer_height=ctx.height
+                ctx.last_p[0],
+                ctx.last_p[1],
+                target_z if target_z is not None else ctx.last_p[2],
+                target_x,
+                target_y,
+                layer_height=ctx.height,
+                segment_label=segment_label,
             )
+
+            if not segment_analysis:
+                distance = math.hypot(target_x - ctx.last_p[0], target_y - ctx.last_p[1])
+                if distance > MAX_SURFACE_FOLLOW_SEGMENT_MM:
+                    logger.warning(
+                        "[GCodeZAA] Surface-follow state jump candidate at line %d: start=(%.3f, %.3f, %.3f) target=(%.3f, %.3f, %.3f) distance=%.2fmm relative_positioning=%s relative_extrusion=%s",
+                        ctx.gcode_line + 1,
+                        ctx.last_p[0],
+                        ctx.last_p[1],
+                        ctx.last_p[2],
+                        target_x,
+                        target_y,
+                        target_z if target_z is not None else ctx.last_p[2],
+                        distance,
+                        ctx.relative_positioning,
+                        ctx.relative_extrusion,
+                    )
             
             if segment_analysis:
                 ctx.extrusion = _build_surface_extrusions(

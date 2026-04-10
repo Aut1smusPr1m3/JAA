@@ -327,7 +327,8 @@ class SurfaceAnalyzer:
         x1: float, y1: float, z: float,
         x2: float, y2: float,
         layer_height: float = 0.2,
-        sample_distance: float = SURFACE_SAMPLE_DISTANCE
+        sample_distance: float = SURFACE_SAMPLE_DISTANCE,
+        segment_label: str | None = None,
     ) -> List[Dict]:
         """
         Batch analyze a motion segment by sampling points along the path.
@@ -340,8 +341,10 @@ class SurfaceAnalyzer:
         # Guard against implausible jumps caused by upstream state pollution (for example
         # relative-motion macro sections leaking into absolute print-state tracking).
         if distance > MAX_SURFACE_FOLLOW_SEGMENT_MM:
+            label_suffix = f" [{segment_label}]" if segment_label else ""
             logger.warning(
-                "Skipping surface-following for implausible segment: distance=%.2fmm (max=%.2fmm) start=(%.3f, %.3f) end=(%.3f, %.3f)",
+                "Skipping surface-following for implausible segment%s: distance=%.2fmm (max=%.2fmm) start=(%.3f, %.3f) end=(%.3f, %.3f)",
+                label_suffix,
                 distance,
                 MAX_SURFACE_FOLLOW_SEGMENT_MM,
                 x1,
