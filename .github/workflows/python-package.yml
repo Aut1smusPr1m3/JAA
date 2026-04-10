@@ -10,10 +10,12 @@ on:
 
 jobs:
   test:
+    name: py${{ matrix.python-version }} / ${{ matrix.open3d && 'with-open3d' || 'without-open3d' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: [3.11, 3.12]
+        open3d: [false, true]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,6 +30,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install optional Open3D
+        if: matrix.open3d
+        run: |
+          pip install open3d
+
       - name: Run tests
         run: |
-          python -m pytest -q
+          python -m pytest -q -r s

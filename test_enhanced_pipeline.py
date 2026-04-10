@@ -20,10 +20,8 @@ def test_surface_analysis_imports():
     try:
         from GCodeZAA.gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
         logger.info("✓ Surface analysis imports successful")
-        return True
     except Exception as e:
-        logger.error(f"✗ Surface analysis import failed: {e}")
-        return False
+        raise AssertionError(f"Surface analysis import failed: {e}") from e
 
 def test_process_line_signature():
     """Test that process_line has correct signature with surface analysis"""
@@ -35,15 +33,10 @@ def test_process_line_signature():
         params = list(sig.parameters.keys())
         
         # Should have: ctx, surface_analyzer, edge_detector
-        if len(params) >= 3:
-            logger.info(f"✓ process_line signature updated: {params}")
-            return True
-        else:
-            logger.error(f"✗ process_line missing parameters: {params}")
-            return False
+        assert len(params) >= 3, f"process_line missing parameters: {params}"
+        logger.info(f"✓ process_line signature updated: {params}")
     except Exception as e:
-        logger.error(f"✗ process_line test failed: {e}")
-        return False
+        raise AssertionError(f"process_line test failed: {e}") from e
 
 def test_arc_decomposition():
     """Test that G2/G3 arc decomposition works"""
@@ -64,15 +57,10 @@ def test_arc_decomposition():
             segment_length=1.0
         )
         
-        if len(waypoints) >= 2:
-            logger.info(f"✓ Arc decomposition works: {len(waypoints)} waypoints")
-            return True
-        else:
-            logger.error("✗ Arc decomposition failed: insufficient waypoints")
-            return False
+        assert len(waypoints) >= 2, "Arc decomposition failed: insufficient waypoints"
+        logger.info(f"✓ Arc decomposition works: {len(waypoints)} waypoints")
     except Exception as e:
-        logger.error(f"✗ Arc decomposition test failed: {e}")
-        return False
+        raise AssertionError(f"Arc decomposition test failed: {e}") from e
 
 def test_context_enhancements():
     """Test that ProcessorContext has surface tracking"""
@@ -88,15 +76,12 @@ def test_context_enhancements():
         has_z_offset_history = 'z_offset_history' in source
         has_record_surface_normal = 'record_surface_normal' in source
         
-        if has_normal_history and has_z_offset_history and has_record_surface_normal:
-            logger.info("✓ ProcessorContext enhancements present")
-            return True
-        else:
-            logger.error("✗ ProcessorContext missing enhancements")
-            return False
+        assert has_normal_history and has_z_offset_history and has_record_surface_normal, (
+            "ProcessorContext missing enhancements"
+        )
+        logger.info("✓ ProcessorContext enhancements present")
     except Exception as e:
-        logger.error(f"✗ Context test failed: {e}")
-        return False
+        raise AssertionError(f"Context test failed: {e}") from e
 
 def test_extrusion_enhancements():
     """Test that extrusion module has new functions"""
@@ -106,12 +91,10 @@ def test_extrusion_enhancements():
         
         # Test function exists
         source = inspect.getsource(calculate_arc_radius)
-        if source:
-            logger.info("✓ Extrusion enhancements present")
-            return True
+        assert source, "Extrusion enhancements source is empty"
+        logger.info("✓ Extrusion enhancements present")
     except Exception as e:
-        logger.error(f"✗ Extrusion test failed: {e}")
-        return False
+        raise AssertionError(f"Extrusion test failed: {e}") from e
 
 def main():
     """Run all tests"""

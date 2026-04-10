@@ -9,6 +9,7 @@ import re
 import subprocess
 import logging
 import json
+import hashlib
 
 # --- LOGGING KONFIGURATION (MUST BE FIRST!) ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,13 +33,16 @@ try:
     if os.path.exists(gcodezaa_path):
         sys.path.insert(0, gcodezaa_path)
         from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
+        from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE
         ZAA_ENABLED = True
         logging.info("[ZAA] Z-Anti-Aliasing module loaded successfully")
     else:
         ZAA_ENABLED = False
+        DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
         logging.warning("[ZAA] GCodeZAA directory not found - Z-Anti-Aliasing disabled")
 except (ImportError, ModuleNotFoundError) as e:
     ZAA_ENABLED = False
+    DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
     logging.warning(f"[ZAA] Import failed ({e}) - Z-Anti-Aliasing disabled")
 
 # GCodeZAA Integration (Optional Auto-Enhancement)
@@ -78,7 +82,7 @@ ZAA_LAYER_HEIGHT = 0.2                  # Expected layer height in mm
 ZAA_RESOLUTION = 0.05                   # Ray casting resolution in mm
 ZAA_SMOOTH_NORMALS = 3                  # Normal smoothing window (0=disabled)
 ZAA_MIN_ANGLE_FOR_ZAA = 5.0            # Only apply ZAA if surface angle > this (degrees)
-ZAA_MAX_SMOOTHING_ANGLE = 45.0         # Maximum safe smoothing angle from vertical
+ZAA_MAX_SMOOTHING_ANGLE = DEFAULT_MAX_SMOOTHING_ANGLE  # Maximum safe smoothing angle from vertical
 ZAA_Z_OFFSET_PER_ANGLE = 0.01           # Z offset in mm per degree of surface angle (for heuristic ZAA)
 ZAA_VERBOSE_LOGGING = False             # Disable verbose tensor batch logging for performance
 G1_PATTERN = re.compile(r'([XYZ])([-+]?\d*\.\d+|[-+]?\d+)')
@@ -88,22 +92,6 @@ ARC_PATTERN = re.compile(r'([XYZIJKF])([-+]?\d*\.\d+|[-+]?\d+)')  # G2/G3 arc pa
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
 ARC_MIN_ACCEL = 6000                     # Minimum accel for arc moves
 ARC_MAX_DEVIATION = 0.1                  # Max deviation for arc fitting (mm)
-
-def calc_angle(v1, v2):
-    m1_sq = v1[0]*v1[0] + v1[1]*v1[1] + v1[2]*v1[2]
-    m2_sq = v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2]
-    
-    if m1_sq == 0.0 or m2_sq == 0.0: 
-        return 0.0
-    
-    dot = v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2]
-    val = dot / math.sqrt(m1_sq * m2_sq)
-    
-    # Float-Inseln abfangen
-    if val > 1.0: val = 1.0
-    elif val < -1.0: val = -1.0
-    
-    return math.degrees(math.acos(val))
 
 def safe_parse_g1(cmd_strip):
     x = y = z = None
@@ -360,23 +348,6 @@ def generate_quality_report(gcode_file, original_size):
         logging.warning(f"[REPORT] Quality report generation failed: {e}")
         return None
 
-def print_progress_bar(current, total, stage_name, bar_length=40):
-    """Display CLI progress bar for long operations."""
-    if total == 0:
-        return
-    
-    percent = (current / total) * 100
-    filled = int(bar_length * current / total)
-    bar = '█' * filled + '░' * (bar_length - filled)
-    
-    status = f"[{stage_name}] {bar} {percent:.1f}% ({current}/{total})"
-    sys.stdout.write('\r' + status)
-    sys.stdout.flush()
-    
-    if current == total:
-        sys.stdout.write('\n')
-        sys.stdout.flush()
-
 def backup_gcode(gcode_file):
     """Create backup of original G-code before processing."""
     try:
@@ -389,6 +360,17 @@ def backup_gcode(gcode_file):
     except Exception as e:
         logging.warning(f"[BACKUP] Failed to create backup: {e}")
         return None
+
+def select_primary_stl_model(model_dir):
+    """Return the first STL filename in sorted order from model_dir, or None."""
+    if not os.path.isdir(model_dir):
+        return None
+    stl_files = sorted(
+        f for f in os.listdir(model_dir) if f.lower().endswith('.stl')
+    )
+    if not stl_files:
+        return None
+    return stl_files[0]
 
 def detect_ironing_sections(gcode_lines):
     """
@@ -441,6 +423,124 @@ def restore_from_backup(gcode_file, backup_file):
         logging.error(f"[RECOVERY] Failed to restore backup: {e}")
     return False
 
+
+def sidecar_path_for_gcode(gcode_file):
+    return f"{gcode_file}.meta"
+
+
+def _hash_text_lines(lines):
+    h = hashlib.sha256()
+    for line in lines:
+        h.update(line.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _hash_file(file_path):
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_stage2_metadata(gcode_lines, selected_model, stage2_input_sha256, stage2_output_sha256):
+    ironing_ranges = detect_ironing_sections(gcode_lines)
+    contour_markers = []
+    for idx, line in enumerate(gcode_lines):
+        if line.startswith(";RESET_Z") or "_CONTOUR" in line:
+            contour_markers.append(idx)
+
+    return {
+        "schema_version": 1,
+        "stage": "stage_2",
+        "generated_unix": time.time(),
+        "selected_model": selected_model,
+        "stage2_input_sha256": stage2_input_sha256,
+        "stage2_output_sha256": stage2_output_sha256,
+        "line_count": len(gcode_lines),
+        "ironing_ranges": ironing_ranges,
+        "contour_marker_lines": contour_markers,
+    }
+
+
+def write_sidecar_metadata(gcode_file, metadata):
+    sidecar = sidecar_path_for_gcode(gcode_file)
+    with open(sidecar, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+    return sidecar
+
+
+def load_sidecar_metadata(gcode_file):
+    sidecar = sidecar_path_for_gcode(gcode_file)
+    if not os.path.exists(sidecar):
+        return None
+    with open(sidecar, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return None
+
+
+def remove_sidecar_metadata(gcode_file):
+    sidecar = sidecar_path_for_gcode(gcode_file)
+    if os.path.exists(sidecar):
+        os.remove(sidecar)
+        return True
+    return False
+
+
+def sidecar_hash_matches_file(gcode_file, metadata, hash_key):
+    expected = metadata.get(hash_key)
+    if not expected:
+        return False
+    return expected == _hash_file(gcode_file)
+
+
+def invalidate_stale_sidecar(gcode_file, current_stage2_input_sha256):
+    """Remove existing sidecar when it does not match current Stage 2 input hash."""
+    sidecar = sidecar_path_for_gcode(gcode_file)
+    if not os.path.exists(sidecar):
+        return False
+
+    metadata = load_sidecar_metadata(gcode_file)
+    if metadata is None:
+        os.remove(sidecar)
+        logging.warning("[GCodeZAA] Removed unreadable metadata sidecar")
+        return True
+
+    previous_input_sha = metadata.get("stage2_input_sha256")
+    if previous_input_sha != current_stage2_input_sha256:
+        os.remove(sidecar)
+        logging.info("[GCodeZAA] Removed stale metadata sidecar due to input hash mismatch")
+        return True
+
+    return False
+
+
+def update_sidecar_stage3_status(gcode_file, status, include_output_hash=False):
+    metadata = load_sidecar_metadata(gcode_file)
+    if metadata is None:
+        return False
+
+    metadata["stage_3"] = status
+    if include_output_hash:
+        metadata["stage3_output_sha256"] = _hash_file(gcode_file)
+
+    write_sidecar_metadata(gcode_file, metadata)
+    return True
+
+
+def enforce_stage1_success_or_raise(stage_status):
+    if stage_status.get("stage_1") == "COMPLETE":
+        return
+
+    stage_status["stage_2"] = "SKIPPED (stage 1 failed)"
+    stage_status["stage_3"] = "SKIPPED (stage 1 failed)"
+    raise RuntimeError("Stage 1 failed validation")
+
 def validate_gcode(file_path):
     """Quick validation of G-code file integrity."""
     try:
@@ -489,48 +589,7 @@ def process_gcode(file_path):
     else:
         logging.debug(f"[IRONING] No ironing sections detected")
     
-    def in_ironing_section(line_idx):
-        """Check if current line is inside an ironing section."""
-        for start, end in ironing_ranges:
-            if start <= line_idx < end:
-                return True
-        return False
-
-    # === LOAD STL MODELS FOR SURFACE ANALYSIS ===
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    stl_dir = os.path.join(script_dir, "stl_models")
-    raycasting_scene = None
-    zaa_with_stl = False
-    zaa_mode = "EDGE DETECTION"  # Default mode
-    
-    if ENABLE_ZAA and os.path.isdir(stl_dir):
-        try:
-            import open3d
-            stl_files = [f for f in os.listdir(stl_dir) if f.lower().endswith('.stl')]
-            if stl_files:
-                mesh = None
-                for stl_file in stl_files[:1]:  # Load first STL as primary model
-                    stl_path = os.path.join(stl_dir, stl_file)
-                    m = open3d.io.read_triangle_mesh(stl_path)
-                    if mesh is None:
-                        mesh = m
-                    else:
-                        mesh += m  # Combine meshes
-                
-                if mesh is not None:
-                    mesh.compute_vertex_normals()
-                    raycasting_scene = open3d.t.geometry.RaycastingScene()
-                    raycasting_scene.add_triangles(open3d.t.geometry.TriangleMesh.from_legacy(mesh))
-                    zaa_with_stl = True
-                    zaa_mode = "TENSOR RAYCASTING"
-                    logging.info(f"[ZAA] Loaded {len(stl_files)} STL model(s) for surface raycasting")
-        except Exception as e:
-            logging.warning(f"[ZAA] STL loading failed ({e}) - using edge detection mode")
-    
-    # Z-compensation moved to Stage 2 (GCodeZAA)
-    # Stage 1 no longer uses SurfaceAnalyzer or EdgeDetector
-    surface_analyzer = None
-    edge_detector = None
+    # Stage 1 is kinematic-only. Surface analysis is delegated to Stage 2 (GCodeZAA).
     logging.info(f"[PIPELINE] Stage 1: Kinematic-only mode (Z-compensation delegated to Stage 2 GCodeZAA)")
 
     optimized = []
@@ -700,6 +759,11 @@ if __name__ == "__main__":
             sys.exit(1)
         
         start_time = time.time()
+        stage_status = {
+            "stage_1": "SKIPPED",
+            "stage_2": "SKIPPED",
+            "stage_3": "SKIPPED",
+        }
         
         # Get script directory (where Ultra_Optimizer.py is located)
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -708,6 +772,7 @@ if __name__ == "__main__":
         logging.info("[PIPELINE] Stage 1: Kinematic Optimization + M204 Acceleration Control")
         process_gcode(gcode_file)
         logging.info("[PIPELINE] Stage 1 Complete ✓")
+        stage_status["stage_1"] = "COMPLETE"
         
         # Validate output
         valid, msg = validate_gcode(gcode_file)
@@ -715,36 +780,79 @@ if __name__ == "__main__":
             logging.info(f"[VALIDATION] Stage 1 Output: {msg}")
         else:
             logging.warning(f"[VALIDATION] Stage 1 Output check: {msg}")
+            stage_status["stage_1"] = "FAILED"
+
+        if stage_status["stage_1"] != "COMPLETE":
+            logging.error("[PIPELINE] Stage 1 did not complete successfully; Stage 2 and Stage 3 will be skipped")
+        enforce_stage1_success_or_raise(stage_status)
         
         # === STAGE 2: Optional GCodeZAA Full Raycasting with Z-Compensation ===
         if GCODEZAA_AVAILABLE:
             logging.info("[PIPELINE] Stage 2: GCodeZAA Full Surface Raycasting + Z-Compensation")
             try:
                 model_dir = os.path.join(script_dir, "stl_models")
-                
-                if os.path.isdir(model_dir) and os.listdir(model_dir):
-                    with open(gcode_file, 'r', encoding='utf-8') as f:
-                        gcode_lines = f.readlines()
-                    
-                    # Note: Ironing sections already detected in Stage 1
-                    logging.info(f"[GCodeZAA] Found STL models in {model_dir} - applying surface raycasting")
-                    enhanced_gcode = gcodezaa_process(gcode_lines, model_dir)
-                    
-                    with open(gcode_file, 'w', encoding='utf-8') as f:
-                        f.writelines(enhanced_gcode)
-                    
-                    logging.info("[PIPELINE] Stage 2 Complete ✓")
-                else:
-                    logging.info("[GCodeZAA] No STL models found - skipping full raycasting")
+
+                if not os.path.isdir(model_dir):
+                    logging.warning(f"[GCodeZAA] Stage 2 skipped: model directory missing: {model_dir}")
                     logging.info("[PIPELINE] Stage 2 Skipped (Optional)")
+                    stage_status["stage_2"] = "SKIPPED (model dir missing)"
+                    remove_sidecar_metadata(gcode_file)
+                else:
+                    selected_model = select_primary_stl_model(model_dir)
+                    if not selected_model:
+                        logging.warning(f"[GCodeZAA] Stage 2 skipped: no STL files found in {model_dir}")
+                        logging.info("[PIPELINE] Stage 2 Skipped (Optional)")
+                        stage_status["stage_2"] = "SKIPPED (no STL)"
+                        remove_sidecar_metadata(gcode_file)
+                    else:
+                        plate_object = (selected_model, 0.0, 0.0)
+
+                        with open(gcode_file, 'r', encoding='utf-8') as f:
+                            gcode_lines = f.readlines()
+
+                        stage2_input_sha = _hash_text_lines(gcode_lines)
+                        invalidate_stale_sidecar(gcode_file, stage2_input_sha)
+
+                        logging.info(
+                            f"[GCodeZAA] Using STL model '{selected_model}' for surface raycasting"
+                        )
+                        enhanced_gcode = gcodezaa_process(gcode_lines, model_dir, plate_object)
+
+                        stage2_output_sha = _hash_text_lines(enhanced_gcode)
+                        stage2_metadata = build_stage2_metadata(
+                            enhanced_gcode,
+                            selected_model,
+                            stage2_input_sha,
+                            stage2_output_sha,
+                        )
+
+                        with open(gcode_file, 'w', encoding='utf-8') as f:
+                            f.writelines(enhanced_gcode)
+
+                        sidecar_path = write_sidecar_metadata(gcode_file, stage2_metadata)
+                        logging.info(f"[GCodeZAA] Stage 2 metadata sidecar written: {os.path.basename(sidecar_path)}")
+
+                        logging.info("[PIPELINE] Stage 2 Complete ✓")
+                        stage_status["stage_2"] = "COMPLETE"
             except Exception as e:
                 logging.warning(f"[GCodeZAA] Raycasting failed: {e}")
                 logging.info("[PIPELINE] Stage 2 Failed - Continuing with Stage 1 results")
+                stage_status["stage_2"] = "FAILED"
+                remove_sidecar_metadata(gcode_file)
         else:
-            logging.info("[PIPELINE] Stage 2 Skipped (GCodeZAA not available)")
+            logging.warning("[PIPELINE] Stage 2 Skipped: GCodeZAA not available (install optional Open3D deps)")
+            stage_status["stage_2"] = "SKIPPED (GCodeZAA unavailable)"
+            remove_sidecar_metadata(gcode_file)
         
         # === STAGE 3: ArcWelder ===
         try:
+            existing_sidecar = load_sidecar_metadata(gcode_file)
+            if existing_sidecar is not None and not sidecar_hash_matches_file(
+                gcode_file, existing_sidecar, "stage2_output_sha256"
+            ):
+                logging.warning("[ArcWelder] Sidecar out of sync with Stage 2 output - removing stale sidecar")
+                remove_sidecar_metadata(gcode_file)
+
             arcwelder_path = os.path.join(script_dir, "ArcWelder.exe")
             if os.path.isfile(arcwelder_path):
                 logging.info("[PIPELINE] Initializing Stage 3 - Arc Welding Optimization...")
@@ -789,8 +897,10 @@ if __name__ == "__main__":
                     else:
                         # Move temp file to original location
                         shutil.move(temp_aw_path, gcode_file)
+                        update_sidecar_stage3_status(gcode_file, "COMPLETE", include_output_hash=True)
                         logging.info("[ArcWelder] Arc welding optimization successful")
                         logging.info("[PIPELINE] Stage 3 Complete ✓")
+                        stage_status["stage_3"] = "COMPLETE"
                 else:
                     logging.error(f"[ArcWelder] Process failed (Code {result.returncode})")
                     if result.stderr:
@@ -799,13 +909,19 @@ if __name__ == "__main__":
                         logging.debug(f"[ArcWelder] STDOUT: {result.stdout.strip()}")
                     if os.path.exists(temp_aw_path):
                         os.remove(temp_aw_path)
+                    update_sidecar_stage3_status(gcode_file, "FAILED")
                     logging.info("[PIPELINE] Stage 3 Failed - Continuing with previous stages")
+                    stage_status["stage_3"] = "FAILED"
             else:
                 logging.info("[PIPELINE] Stage 3 Skipped (ArcWelder not available)")
+                update_sidecar_stage3_status(gcode_file, "SKIPPED (ArcWelder unavailable)")
+                stage_status["stage_3"] = "SKIPPED (ArcWelder unavailable)"
         except Exception as e:
             logging.error(f"[ArcWelder] Exception occurred: {e}")
             logging.warning(f"[ArcWelder] Arc welding failed")
             logging.info("[PIPELINE] Stage 3 Failed - Continuing with previous stages")
+            update_sidecar_stage3_status(gcode_file, "FAILED")
+            stage_status["stage_3"] = "FAILED"
         
         # === POST-PROCESSING ANALYSIS ===
         logging.info("[PIPELINE] Generating post-processing statistics...")
@@ -833,6 +949,8 @@ if __name__ == "__main__":
         
         # === COMPLETION ===
         total_time = time.time() - start_time
+        logging.info("[PIPELINE] Summary: Stage 1=%s | Stage 2=%s | Stage 3=%s",
+                 stage_status["stage_1"], stage_status["stage_2"], stage_status["stage_3"])
         logging.info("[PIPELINE] ════════════════════════════════════════")
         logging.info("[PIPELINE] All-In-One Post-Processing Complete ✓")
         logging.info(f"[SYSTEM] Output: {os.path.basename(gcode_file)}")

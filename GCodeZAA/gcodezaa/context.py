@@ -1,7 +1,11 @@
 from gcodezaa.slicer_syntax import SlicerSyntax, Slicer
 from gcodezaa.extrusion import Extrusion
-import open3d
 import logging
+
+try:
+    import open3d
+except ModuleNotFoundError:
+    open3d = None
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +26,8 @@ class ProcessorContext:
     last_e: float = 0
     last_contoured_z: float | None = None
 
-    exclude_object: dict[str, open3d.t.geometry.RaycastingScene] = {}
-    active_object: open3d.t.geometry.RaycastingScene | None = None
+    exclude_object: dict[str, object] = {}
+    active_object: object | None = None
 
     extrusion: list[Extrusion] = []
 

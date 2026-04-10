@@ -1,50 +1,33 @@
 #!/usr/bin/env python3
-import subprocess
+"""Guarded Python subprocess ArcWelder test.
+
+This test intentionally targets a Windows-only local setup.
+"""
+
 import os
+import subprocess
 
-os.chdir("c:\\ArcWelder\\Skript")
+import pytest
 
-# Test with the exact command from our fixed code
-cmd = [
-    "./ArcWelder.exe",
-    "test_simple.gcode",
-    "test_output_py.gcode",
-    "-d",
-    "-y",
-    "-z",
-    "-t=0.10",
-    "-r=0.05",
-    "--",
-]
 
-# Note: We don't need the -- separator for this simple case
-cmd_simple = [
-    ".\\ArcWelder.exe",
-    "test_simple.gcode",
-    "test_output_py.gcode",
-    "-t=0.10",
-    "-r=0.05",
-]
+pytestmark = pytest.mark.skipif(
+    os.name != "nt",
+    reason="Requires Windows path and ArcWelder local installation",
+)
 
-print("Testing Python subprocess call to ArcWelder...")
-print(f"Command: {cmd_simple}\n")
 
-result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=30)
+def test_python_subprocess_arcwelder_command():
+    os.chdir(r"c:\ArcWelder\Skript")
 
-print(f"Return code: {result.returncode}\n")
+    cmd = [
+        ".\\ArcWelder.exe",
+        "test_simple.gcode",
+        "test_output_py.gcode",
+        "-t=0.10",
+        "-r=0.05",
+    ]
 
-if result.stdout:
-    print("STDOUT:")
-    print(result.stdout)
-
-if result.stderr:
-    print("\nSTDERR:")
-    print(result.stderr)
-
-if result.returncode == 0:
-    print("\n✓ ArcWelder succeeded!")
-    if os.path.exists("test_output_py.gcode"):
-        size = os.path.getsize("test_output_py.gcode")
-        print(f"Output file size: {size} bytes")
-else:
-    print(f"\n✗ ArcWelder failed with code {result.returncode}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert os.path.exists("test_output_py.gcode"), "ArcWelder did not create output file"
+    assert os.path.getsize("test_output_py.gcode") > 0, "Output file is empty"

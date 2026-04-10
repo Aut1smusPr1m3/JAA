@@ -33,30 +33,23 @@ def test_g_code_with_arcs():
     ]
     
     # Process without model (no ZAA analysis)
-    try:
-        result = process_gcode(gcode, ".")
-        
-        print("✓ G-code processed successfully")
-        print(f"✓ Input lines: {len(gcode)}")
-        print(f"✓ Output lines: {len(result)}")
-        
-        # Verify arc commands are preserved in output
-        arc_commands = [line for line in result if 'G2 ' in line or 'G3 ' in line]
-        print(f"✓ Arc commands in output: {len(arc_commands)}")
-        
-        for i, line in enumerate(result):
-            if 'G2 ' in line or 'G3 ' in line:
-                print(f"  Line {i}: {line.strip()}")
-        
-        print()
-        print("✓ Full pipeline integration test PASSED")
-        return True
-        
-    except Exception as e:
-        print(f"✗ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    result = process_gcode(gcode, ".")
+
+    print("✓ G-code processed successfully")
+    print(f"✓ Input lines: {len(gcode)}")
+    print(f"✓ Output lines: {len(result)}")
+
+    # Verify arc commands are preserved in output
+    arc_commands = [line for line in result if 'G2 ' in line or 'G3 ' in line]
+    assert len(arc_commands) >= 2, "Arc commands were not preserved in output"
+    print(f"✓ Arc commands in output: {len(arc_commands)}")
+
+    for i, line in enumerate(result):
+        if 'G2 ' in line or 'G3 ' in line:
+            print(f"  Line {i}: {line.strip()}")
+
+    print()
+    print("✓ Full pipeline integration test PASSED")
 
 def test_arc_parameter_parsing():
     """Test that arc parameters are correctly parsed"""
@@ -88,11 +81,11 @@ def test_arc_parameter_parsing():
             print(f"  ✗ {gcode_line[:40]}")
             print(f"    Expected: {expected}")
             print(f"    Got: {args}")
-            return False
+            assert False, f"Parameter parsing mismatch for: {gcode_line}"
     
     print("✓ Parameter parsing test PASSED")
     print()
-    return True
+    assert True
 
 def test_arc_safety_validation():
     """Test safety checks for arc parameters"""
@@ -134,7 +127,7 @@ def test_arc_safety_validation():
     
     print("✓ Safety validation test PASSED")
     print()
-    return True
+    assert True
 
 if __name__ == "__main__":
     print()

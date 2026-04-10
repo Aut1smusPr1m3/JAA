@@ -6,9 +6,14 @@ and true non-planar ironing support.
 
 import math
 import logging
-import open3d
 import numpy as np
 from typing import Tuple, Optional, List, Dict
+from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE
+
+try:
+    import open3d
+except ModuleNotFoundError:
+    open3d = None
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +23,7 @@ MIN_SAMPLE_DISTANCE = 0.05  # mm minimum sample spacing
 MAX_SAMPLE_DISTANCE = 0.5   # mm maximum sample spacing for long segments
 MAX_RAY_DISTANCE = 2.0  # mm maximum cast distance
 MAX_Z_OFFSET = 0.35  # mm maximum surface offset allowed
-MAX_SMOOTHING_ANGLE = 40.0  # degrees from vertical beyond which smoothing is reduced
+MAX_SMOOTHING_ANGLE = DEFAULT_MAX_SMOOTHING_ANGLE  # degrees from vertical beyond which smoothing is reduced
 NORMAL_SMOOTHING_WINDOW = 5  # samples for normal averaging
 SLOPE_SMOOTHING_WINDOW = 5  # samples for z-offset smoothing
 EDGE_THRESHOLD_ANGLE = 45  # degrees for edge detection
@@ -28,7 +33,7 @@ BATCH_RAY_SIZE = 1024  # Number of rays to process in one batch
 class SurfaceAnalyzer:
     """Analyzes surfaces using STL raycasting with tensor batching for performance."""
     
-    def __init__(self, raycasting_scene: Optional[open3d.t.geometry.RaycastingScene] = None):
+    def __init__(self, raycasting_scene: Optional[object] = None):
         self.scene = raycasting_scene
         self.normal_history = []
         self.last_surface_z = 0.0

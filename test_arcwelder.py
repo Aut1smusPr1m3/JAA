@@ -1,98 +1,51 @@
 #!/usr/bin/env python3
+"""Guarded ArcWelder smoke tests.
+
+These tests are Windows-specific because they rely on legacy local paths.
 """
-Test ArcWelder to diagnose the issue
-"""
-import subprocess
+
 import os
+import subprocess
 import tempfile
-import shutil
 
-script_dir = "c:\\ArcWelder\\Skript"
-arcwelder_exe = os.path.join(script_dir, "ArcWelder.exe")
+import pytest
 
-print(f"ArcWelder path: {arcwelder_exe}")
-print(f"ArcWelder exists: {os.path.isfile(arcwelder_exe)}")
 
-# Find a test gcode file
-test_gcode = None
-for f in os.listdir(script_dir):
-    if f.endswith('.gcode'):
-        test_gcode = os.path.join(script_dir, f)
-        break
+SCRIPT_DIR = r"c:\ArcWelder\Skript"
+ARCWELDER_EXE = os.path.join(SCRIPT_DIR, "ArcWelder.exe")
 
-if not test_gcode:
-    print("ERROR: No .gcode file found in script directory!")
-    exit(1)
 
-print(f"\nTest G-Code file: {os.path.basename(test_gcode)}")
-print(f"File size: {os.path.getsize(test_gcode)} bytes")
+pytestmark = pytest.mark.skipif(
+    os.name != "nt",
+    reason="ArcWelder smoke tests require Windows local ArcWelder installation",
+)
 
-# Create temporary output file
-fd, temp_output = tempfile.mkstemp(suffix=".gcode", text=True)
-os.close(fd)
 
-print(f"\nTemporary output: {temp_output}")
+def _find_test_gcode() -> str:
+    for name in os.listdir(SCRIPT_DIR):
+        if name.endswith(".gcode"):
+            return os.path.join(SCRIPT_DIR, name)
+    pytest.skip("No .gcode file found in ArcWelder script directory")
 
-# Test different ArcWelder commands
-print("\n" + "="*60)
-print("TEST 1: Minimal command (just files)")
-print("="*60)
-cmd = [arcwelder_exe, test_gcode, temp_output]
-print(f"Command: {' '.join(cmd)}\n")
-result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-print(f"Return code: {result.returncode}")
-if result.stdout:
-    print(f"STDOUT:\n{result.stdout}")
-if result.stderr:
-    print(f"STDERR:\n{result.stderr}")
-print(f"Output file size: {os.path.getsize(temp_output) if os.path.exists(temp_output) else 'N/A'}")
-if os.path.exists(temp_output):
-    os.remove(temp_output)
 
-print("\n" + "="*60)
-print("TEST 2: With tolerance and resolution")
-print("="*60)
-cmd = [arcwelder_exe, "-t=0.10", "-r=0.05", test_gcode, temp_output]
-print(f"Command: {' '.join(cmd)}\n")
-result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-print(f"Return code: {result.returncode}")
-if result.stdout:
-    print(f"STDOUT:\n{result.stdout}")
-if result.stderr:
-    print(f"STDERR:\n{result.stderr}")
-print(f"Output file size: {os.path.getsize(temp_output) if os.path.exists(temp_output) else 'N/A'}")
-if os.path.exists(temp_output):
-    os.remove(temp_output)
+def test_arcwelder_executable_exists():
+    assert os.path.isfile(ARCWELDER_EXE), "ArcWelder.exe was not found in expected directory"
 
-print("\n" + "="*60)
-print("TEST 3: With all flags (-d, -y, -z, tolerance, resolution)")
-print("="*60)
-cmd = [arcwelder_exe, "-d", "-y", "-z", "-t=0.10", "-r=0.05", "--", test_gcode, temp_output]
-print(f"Command: {' '.join(cmd)}\n")
-result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-print(f"Return code: {result.returncode}")
-if result.stdout:
-    print(f"STDOUT:\n{result.stdout}")
-if result.stderr:
-    print(f"STDERR:\n{result.stderr}")
-print(f"Output file size: {os.path.getsize(temp_output) if os.path.exists(temp_output) else 'N/A'}")
-if os.path.exists(temp_output):
-    os.remove(temp_output)
 
-print("\n" + "="*60)
-print("TEST 4: Check ArcWelder help/version")
-print("="*60)
-cmd = [arcwelder_exe, "-h"]
-print(f"Command: {' '.join(cmd)}\n")
-result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-print(f"Return code: {result.returncode}")
-if result.stdout:
-    print(f"STDOUT:\n{result.stdout}")
-if result.stderr:
-    print(f"STDERR:\n{result.stderr}")
+def test_arcwelder_basic_command():
+    if not os.path.isfile(ARCWELDER_EXE):
+        pytest.skip("ArcWelder executable missing")
 
-# Clean up
-if os.path.exists(temp_output):
-    os.remove(temp_output)
+    test_gcode = _find_test_gcode()
+    fd, temp_output = tempfile.mkstemp(suffix=".gcode", text=True)
+    os.close(fd)
 
-print("\nDiagnostic test complete!")
+    try:
+        cmd = [ARCWELDER_EXE, "-t=0.10", "-r=0.05", test_gcode, temp_output]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr or result.stdout
+        assert os.path.exists(temp_output), "ArcWelder did not create output file"
+        assert os.path.getsize(temp_output) > 0, "ArcWelder output file is empty"
+    finally:
+        if os.path.exists(temp_output):
+            os.remove(temp_output)

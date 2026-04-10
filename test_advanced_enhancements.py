@@ -31,10 +31,8 @@ def test_batch_surface_analysis():
         assert all("confidence" in r for r in results), "Missing confidence in results"
         
         logger.info("✓ Batch surface analysis works")
-        return True
     except Exception as e:
-        logger.error(f"✗ Batch surface analysis failed: {e}")
-        return False
+        raise AssertionError(f"Batch surface analysis failed: {e}") from e
 
 def test_batch_edge_detection():
     """Test batched edge detection"""
@@ -58,10 +56,8 @@ def test_batch_edge_detection():
         assert all(len(r) == 2 for r in results), "Result tuples wrong size"
         
         logger.info(f"✓ Batch edge detection works ({len(results)} edges detected)")
-        return True
     except Exception as e:
-        logger.error(f"✗ Batch edge detection failed: {e}")
-        return False
+        raise AssertionError(f"Batch edge detection failed: {e}") from e
 
 def test_physics_compensation():
     """Test physics-based extrusion compensation"""
@@ -100,10 +96,8 @@ def test_physics_compensation():
         assert result_tilted < result_physics, "Tilt adjustment not working"
         
         logger.info(f"✓ Physics compensation works (base={base_e}, linear={result_linear:.2f}, physics={result_physics:.2f}, tilted={result_tilted:.2f})")
-        return True
     except Exception as e:
-        logger.error(f"✗ Physics compensation failed: {e}")
-        return False
+        raise AssertionError(f"Physics compensation failed: {e}") from e
 
 def test_vector_aligned_retraction():
     """Test vector-aligned retraction calculation"""
@@ -129,10 +123,8 @@ def test_vector_aligned_retraction():
         assert retract_angle[2] != 0, "Z component missing"
         
         logger.info(f"✓ Vector-aligned retraction works (up={retract_up}, angle={retract_angle})")
-        return True
     except Exception as e:
-        logger.error(f"✗ Vector-aligned retraction failed: {e}")
-        return False
+        raise AssertionError(f"Vector-aligned retraction failed: {e}") from e
 
 def test_nonplanar_ironing_path():
     """Test non-planar ironing path generation"""
@@ -164,10 +156,8 @@ def test_nonplanar_ironing_path():
             assert 0 < waypoint["feedrate_factor"] < 1, "Feedrate should be reduced"
         
         logger.info(f"✓ Non-planar ironing path works ({len(ironing_path)} waypoints)")
-        return True
     except Exception as e:
-        logger.error(f"✗ Non-planar ironing path failed: {e}")
-        return False
+        raise AssertionError(f"Non-planar ironing path failed: {e}") from e
 
 def test_segment_batch_analysis():
     """Test batch analysis of a segment"""
@@ -193,10 +183,8 @@ def test_segment_batch_analysis():
             assert "index" in point and "total" in point, "Missing metadata"
         
         logger.info(f"✓ Segment batch analysis works ({len(analysis)} samples)")
-        return True
     except Exception as e:
-        logger.error(f"✗ Segment batch analysis failed: {e}")
-        return False
+        raise AssertionError(f"Segment batch analysis failed: {e}") from e
 
 def test_retraction_vector_magnitude():
     """Test that retraction vectors scale properly"""
@@ -216,10 +204,8 @@ def test_retraction_vector_magnitude():
         assert mag2 > mag1, f"Layer height scaling failed: {mag2} <= {mag1}"
         
         logger.info(f"✓ Retraction vector scaling works (0.2mm: {mag1:.3f}, 0.4mm: {mag2:.3f})")
-        return True
     except Exception as e:
-        logger.error(f"✗ Retraction scaling failed: {e}")
-        return False
+        raise AssertionError(f"Retraction scaling failed: {e}") from e
 
 def main():
     logger.info("=" * 70)

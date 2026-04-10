@@ -4,15 +4,18 @@ from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
 import os
 import re
 import math
-import open3d
 import logging
+
+try:
+    import open3d
+except ModuleNotFoundError:
+    open3d = None
 
 logger = logging.getLogger(__name__)
 
 # === ENHANCED ZAA CONFIGURATION ===
 ZAA_ADAPTIVE_RESOLUTION = True          # Adapt resolution to geometry
 ZAA_MAX_Z_DEVIATION = 0.5              # Max Z deviation from nominal layer
-ZAA_MAX_SMOOTHING_ANGLE = 20.0          # Degrees from vertical beyond which smoothing is reduced
 ZAA_NORMAL_SMOOTHING = 3                # Normal smoothing window
 ZAA_MIN_DEVIATION_THRESHOLD = 0.01      # Ignore Z deviations < this
 ZAA_EDGE_DETECTION = True               # Preserve wall edges
@@ -220,14 +223,17 @@ def process_gcode(
     surface_analyzer = SurfaceAnalyzer(ctx.active_object)
     edge_detector = EdgeDetector()
     
-    is_in_executable = False
+    has_executable_markers = any(
+        line.startswith(ctx.syntax.executable_block_start) for line in ctx.gcode
+    )
+    is_in_executable = not has_executable_markers
     
     while ctx.gcode_line < len(ctx.gcode):
-        if not is_in_executable and ctx.line.startswith(
+        if has_executable_markers and not is_in_executable and ctx.line.startswith(
             ctx.syntax.executable_block_start
         ):
             is_in_executable = True
-        elif is_in_executable and ctx.line.startswith(ctx.syntax.executable_block_end):
+        elif has_executable_markers and is_in_executable and ctx.line.startswith(ctx.syntax.executable_block_end):
             break
         elif is_in_executable:
             process_line(ctx, surface_analyzer, edge_detector)
@@ -240,8 +246,11 @@ def process_gcode(
 
 def load_object(
     ctx: ProcessorContext, name: str, x: float, y: float
-) -> open3d.t.geometry.RaycastingScene:
+) -> object:
     """Load STL model and create raycasting scene with position offset."""
+    if open3d is None:
+        raise RuntimeError("open3d is required to load STL models for raycasting")
+
     model_path = os.path.join(ctx.model_dir, name)
     
     logger.info(f"[GCodeZAA] Loading STL model: {name}")
@@ -522,8 +531,8 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
     if len(ctx.extrusion) > 0:
         if ctx.extrusion[-1].e is not None:
             if ctx.relative_extrusion:
-                # TODO: Handle relative extrusion
-                pass
+                # In relative mode, keep an absolute running total for state continuity.
+                ctx.last_e += ctx.extrusion[-1].e
             else:
                 ctx.last_e = ctx.extrusion[-1].e
         ctx.last_p = ctx.extrusion[-1].pos()

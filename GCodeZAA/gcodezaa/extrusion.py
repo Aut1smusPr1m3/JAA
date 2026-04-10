@@ -1,6 +1,10 @@
 import math
-import open3d
 import logging
+
+try:
+    import open3d
+except ModuleNotFoundError:
+    open3d = None
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +222,7 @@ class Extrusion:
 
     def contour_z(
         self,
-        scene: open3d.t.geometry.RaycastingScene,
+        scene,
         z: float,
         height: float,
         ironing_line: bool,
@@ -226,6 +230,8 @@ class Extrusion:
         resolution=0.1,
         demo_split: float | None = None,
     ) -> list["Extrusion"]:
+        if open3d is None:
+            raise RuntimeError("open3d is required for contour_z raycasting")
         if self.relative:
             raise ValueError("Cannot contour with relative positioning")
         if not self.e:
