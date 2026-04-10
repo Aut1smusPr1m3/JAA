@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.1-alpha.2 - High-throughput Stage 2 raycasting
+
+### Added
+- Throughput regression tests:
+  - `test_gcodezaa_throughput.py`
+- Optional built-in pipeline profiling:
+  - `ULTRA_OPTIMIZER_PROFILE=1`
+  - output file: `ultra_optimizer_profile.prof`
+
+### Changed
+- Stage 2 only raycasts qualifying surface-following extrusion moves (skips travel/non-extrusion moves).
+- Arc decomposition/raycasting is now skipped when surface-following is not applicable.
+- Ray submission now batches upward/downward casts in one vectorized Open3D tensor call.
+- Segment sampling is bounded by `GCODEZAA_MAX_SEGMENT_SAMPLES` to prevent runaway point counts.
+- New tunables for throughput:
+  - `GCODEZAA_SAMPLE_DISTANCE_MM`
+  - `GCODEZAA_MAX_SEGMENT_SAMPLES`
+  - `GCODEZAA_BATCH_RAY_SIZE`
+
+### Validation
+- `python -m pytest -q`
+- Result: `50 passed, 3 skipped`
+- Sample-count reduction check (200mm segment): `4001 -> 192` points (~20.84x fewer samples)
+
 ## v0.2.1-alpha.1 - Safety hardening for alpha testing
 
 ### Added
