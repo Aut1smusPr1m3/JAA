@@ -1,0 +1,29 @@
+name: Stale Issue Cleanup
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run stale issue automation
+        uses: actions/stale@v6
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-stale: 30
+          days-before-close: 7
+          stale-issue-message: |
+            This issue has been automatically marked as stale because it has not had recent activity.
+            If it is still relevant, please update the issue and it will be refreshed.
+          close-issue-message: |
+            Closing this issue due to prolonged inactivity. Feel free to reopen or open a new issue if this is still important.
+          stale-issue-label: stale
+          exempt-issue-labels: |
+            pinned
+            good first issue
+            help wanted
+          operations-per-run: 30
+          only: issues

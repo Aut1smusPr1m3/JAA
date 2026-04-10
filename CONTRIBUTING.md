@@ -51,6 +51,7 @@ This repository is built to support autonomous development. When making changes:
 - Update `AGENT_TASKS.md` if the change affects the task workflow or introduces a new task type.
 - Keep `AGENTS.md` current with the core files and workflow commands.
 - Document any new automation, scheduled workflow, or dependency management change here.
+- This repository also uses automated issue lifecycle management in `.github/workflows/stale-issues.yml`.
 
 ## Dependency Management
 

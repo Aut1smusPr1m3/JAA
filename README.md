@@ -131,6 +131,7 @@ This repository is prepared for GitHub collaboration.
 - Use `AGENT_TASKS.md` for agent-friendly task templates and handoff guidance
 - Dependency automation is configured in `.github/dependabot.yml`
 - Backup and snapshot automation is configured in `.github/workflows/autonomous-backup.yml`
+- Issue lifecycle cleanup is configured in `.github/workflows/stale-issues.yml`
 
 ## ✨ Special Features
 

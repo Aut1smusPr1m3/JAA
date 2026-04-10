@@ -10,6 +10,7 @@ This file provides clear task templates for AI agents and human collaborators wo
 - Primary workflow: `.github/workflows/python-package.yml`
 - Backup workflow: `.github/workflows/autonomous-backup.yml`
 - Dependency automation: `.github/dependabot.yml`
+- Issue lifecycle automation: `.github/workflows/stale-issues.yml`
 
 ## Common Task Types
 
