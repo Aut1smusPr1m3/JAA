@@ -52,8 +52,11 @@ If Stage 2 raycasting is too slow on large files, tune sampling and profiling wi
 # Coarser sampling (higher is faster): default 0.2
 export GCODEZAA_SAMPLE_DISTANCE_MM=0.25
 
-# Hard cap of samples per segment (default 192)
+# Hard cap of samples per segment (default 384)
 export GCODEZAA_MAX_SEGMENT_SAMPLES=128
+
+# Optional sanity guard for implausible XY jumps (default 1000mm)
+export GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=1000
 
 # Batch size for ray submissions (default 4096)
 export GCODEZAA_BATCH_RAY_SIZE=8192

@@ -44,7 +44,8 @@ def _env_int(name: str, default: int) -> int:
 SURFACE_SAMPLE_DISTANCE = _env_float("GCODEZAA_SAMPLE_DISTANCE_MM", 0.2)  # mm between raycasting points
 MIN_SAMPLE_DISTANCE = _env_float("GCODEZAA_MIN_SAMPLE_DISTANCE_MM", 0.08)  # mm minimum sample spacing
 MAX_SAMPLE_DISTANCE = _env_float("GCODEZAA_MAX_SAMPLE_DISTANCE_MM", 1.0)   # mm maximum sample spacing for long segments
-MAX_SEGMENT_SAMPLES = max(16, _env_int("GCODEZAA_MAX_SEGMENT_SAMPLES", 192))
+MAX_SEGMENT_SAMPLES = max(16, _env_int("GCODEZAA_MAX_SEGMENT_SAMPLES", 384))
+MAX_SURFACE_FOLLOW_SEGMENT_MM = _env_float("GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM", 1000.0)
 MAX_RAY_DISTANCE = 2.0  # mm maximum cast distance
 MAX_Z_OFFSET = 0.35  # mm maximum surface offset allowed
 HARD_MAX_SMOOTHING_ANGLE = 20.0
@@ -300,6 +301,20 @@ class SurfaceAnalyzer:
         dx = x2 - x1
         dy = y2 - y1
         distance = math.sqrt(dx * dx + dy * dy)
+
+        # Guard against implausible jumps caused by upstream state pollution (for example
+        # relative-motion macro sections leaking into absolute print-state tracking).
+        if distance > MAX_SURFACE_FOLLOW_SEGMENT_MM:
+            logger.warning(
+                "Skipping surface-following for implausible segment: distance=%.2fmm (max=%.2fmm) start=(%.3f, %.3f) end=(%.3f, %.3f)",
+                distance,
+                MAX_SURFACE_FOLLOW_SEGMENT_MM,
+                x1,
+                y1,
+                x2,
+                y2,
+            )
+            return []
 
         if distance < MIN_SAMPLE_DISTANCE:
             return []

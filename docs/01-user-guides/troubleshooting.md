@@ -57,6 +57,7 @@ Use throughput controls:
 1. Increase sample spacing (fewer rays): `GCODEZAA_SAMPLE_DISTANCE_MM=0.25`
 2. Lower segment sample cap: `GCODEZAA_MAX_SEGMENT_SAMPLES=128`
 3. Increase batch size for cast submission: `GCODEZAA_BATCH_RAY_SIZE=8192`
+4. Guard unrealistic jumps in surface-following segments: `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=1000`
 
 Example:
 ```bash

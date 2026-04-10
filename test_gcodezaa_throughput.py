@@ -100,3 +100,19 @@ def test_analyze_segment_batch_caps_samples_for_long_segments():
     )
 
     assert 2 <= len(analysis) <= MAX_SEGMENT_SAMPLES
+
+
+def test_analyze_segment_batch_skips_implausible_segments():
+    analyzer = SurfaceAnalyzer(None)
+
+    analysis = analyzer.analyze_segment_batch(
+        x1=0.0,
+        y1=0.0,
+        z=0.2,
+        x2=5000.0,
+        y2=0.0,
+        layer_height=0.2,
+        sample_distance=0.2,
+    )
+
+    assert analysis == []
