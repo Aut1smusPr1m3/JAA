@@ -17,6 +17,14 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Alpha prerelease flow (example):
+```bash
+git tag v0.2.1-alpha.6
+git push origin v0.2.1-alpha.6
+```
+
+If you create the GitHub release manually, mark it as a prerelease.
+
 ## Bundle contents
 - `Ultra_Optimizer.py`
 - `ArcWelder.exe` (when present in repository)

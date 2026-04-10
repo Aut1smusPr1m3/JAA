@@ -18,6 +18,23 @@ Common reasons:
 - missing `stl_models/` directory
 - no `.stl` files in `stl_models/`
 
+## Start or end machine G-code seems modified
+Expected behavior:
+- machine start and end blocks are passed through unchanged
+- only printable window lines are processed
+
+Window marker precedence:
+1. `; EXECUTABLE_BLOCK_START` / `; EXECUTABLE_BLOCK_END`
+2. first `; printing object ...` to last `; stop printing object ...`
+
+If your slicer profile does not emit these markers, processing may fall back to full-file mode.
+
+## Sidecar integrity warnings
+If sidecar validation fails, check:
+1. Stage 2 and Stage 3 actually completed in order.
+2. Output file was not externally modified between stage writes.
+3. Sidecar file (`.meta`) is present and parseable JSON.
+
 ## Stage 2 is very slow / high CPU
 Use throughput controls:
 1. Increase sample spacing (fewer rays): `GCODEZAA_SAMPLE_DISTANCE_MM=0.25`

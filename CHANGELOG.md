@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.1-alpha.6 - Documentation alignment release
+
+### Changed
+- Updated docs to reflect marker-based printable-window processing and machine start/end passthrough behavior.
+- Updated docs to describe sidecar integrity validation expectations.
+- Updated docs to reflect conservative smoothing safety defaults (`15deg` default, `20deg` hard cap).
+
+### Validation
+- `python -m pytest -q`
+- Result: `62 passed, 3 skipped`
+
 ## v0.2.1-alpha.5 - Printable window boundaries and sidecar integrity
 
 ### Added

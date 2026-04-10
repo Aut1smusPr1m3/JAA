@@ -6,7 +6,12 @@ Implemented in `Ultra_Optimizer.py`.
 Responsibilities:
 - parse G0/G1/G2/G3 moves,
 - inject M204 acceleration commands with hysteresis,
-- preserve line/comments while applying kinematic acceleration strategy.
+- preserve machine start/end G-code while applying kinematic acceleration strategy inside the printable window.
+
+Printable window detection precedence:
+1. `; EXECUTABLE_BLOCK_START` / `; EXECUTABLE_BLOCK_END`
+2. first `; printing object ...` to last `; stop printing object ...`
+3. full file fallback (if no markers exist)
 
 Notes:
 - Stage 1 is intentionally kinematic-only.
@@ -24,9 +29,14 @@ Current handoff:
 - `Ultra_Optimizer.py` now selects a primary STL and passes `plate_object=(name,0.0,0.0)`.
 
 Responsibilities:
-- executable block processing,
+- printable window processing with machine start/end passthrough,
 - surface analysis and Z adjustments,
 - non-planar ironing logic.
+
+Sidecar behavior:
+- Stage 2 writes sidecar metadata with hashes.
+- Sidecar metadata is validated for schema/hash correctness.
+- Final validation uses Stage 3 hash semantics when the output file has been mutated after Stage 2.
 
 ## Stage 3 (optional)
 Implemented in `Ultra_Optimizer.py` via external `ArcWelder.exe`.

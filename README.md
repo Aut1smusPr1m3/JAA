@@ -6,6 +6,10 @@ Ultra_Optimizer is an OrcaSlicer-focused G-code post-processor with a three-stag
 2. Stage 2 (optional): GCodeZAA surface-aware processing when STL models are available.
 3. Stage 3 (optional): ArcWelder arc compression when ArcWelder.exe is present.
 
+Machine start/end safety:
+- Start G-code and end G-code are preserved unchanged.
+- Stage 1 and Stage 2 operate only inside detected printable object windows.
+
 ## Start here
 - [Documentation entry](docs/00-start-here.md)
 - [Installation](docs/01-user-guides/installation.md)
@@ -66,3 +70,4 @@ For GPU acceleration, use an Open3D build/runtime with SYCL support and availabl
 - Open3D is optional for advanced Stage 2 raycasting workflows.
 - ArcWelder integration requires ArcWelder.exe in repository root.
 - Runtime logs are written to `kinematic_engine.log`.
+- Smoothing safety is conservative by default: `15deg` from vertical, hard-capped at `20deg`.
