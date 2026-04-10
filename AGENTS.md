@@ -36,6 +36,8 @@ When assisting with this repository, agents should:
 - Avoid editing the `Optimizer/` directory, which is a local Python environment
 - Keep changes limited to source, docs, and CI/support metadata
 - Use `pytest` as the verification command for code changes
+- Refer to `CONTRIBUTING.md` and `AGENT_TASKS.md` for autonomous task workflows
+- Verify backup automation in `.github/workflows/autonomous-backup.yml`
 
 ## Recommended editor extensions
 - `ms-python.python`

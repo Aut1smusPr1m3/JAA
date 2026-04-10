@@ -1,0 +1,39 @@
+name: Autonomous Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set backup timestamp
+        run: echo "BACKUP_TS=$(date -u +'%Y%m%d%H%M')" >> $GITHUB_ENV
+
+      - name: Create repo snapshot archive
+        run: |
+          zip -r "repo-backup-${BACKUP_TS}.zip" . -x ".git/*"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ env.BACKUP_TS }}
+          path: repo-backup-${{ env.BACKUP_TS }}.zip
+
+      - name: Create backup tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "autobackup-${BACKUP_TS}"
+          git push origin "autobackup-${BACKUP_TS}"

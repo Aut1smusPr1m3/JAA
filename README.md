@@ -127,6 +127,10 @@ This repository is prepared for GitHub collaboration.
 - Use the issue templates under `.github/ISSUE_TEMPLATE/`
 - Use the PR template in `.github/PULL_REQUEST_TEMPLATE.md`
 - Do not commit the local virtual environment in `Optimizer/`
+- Follow the autonomous development workflow in `CONTRIBUTING.md`
+- Use `AGENT_TASKS.md` for agent-friendly task templates and handoff guidance
+- Dependency automation is configured in `.github/dependabot.yml`
+- Backup and snapshot automation is configured in `.github/workflows/autonomous-backup.yml`
 
 ## ✨ Special Features
 
