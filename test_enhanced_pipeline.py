@@ -32,8 +32,10 @@ def test_process_line_signature():
         sig = inspect.signature(process_line)
         params = list(sig.parameters.keys())
         
-        # Should have: ctx, surface_analyzer, edge_detector
-        assert len(params) >= 3, f"process_line missing parameters: {params}"
+        # Should have: ctx, surface_analyzer
+        assert len(params) >= 2, f"process_line missing parameters: {params}"
+        assert params[0] == "ctx"
+        assert params[1] == "surface_analyzer"
         logger.info(f"✓ process_line signature updated: {params}")
     except Exception as e:
         raise AssertionError(f"process_line test failed: {e}") from e

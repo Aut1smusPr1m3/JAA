@@ -49,3 +49,22 @@ def test_resolve_device_cuda_aliases_to_sycl(monkeypatch):
     monkeypatch.setattr(process, "_sycl_gpu_available", lambda: True)
 
     assert process.resolve_raycast_device_spec() == "SYCL:0"
+
+
+def test_resolve_device_auto_logs_cpu_fallback(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    monkeypatch.setenv("GCODEZAA_RAYCAST_DEVICE", "auto")
+    monkeypatch.setenv("GCODEZAA_REQUIRE_GPU", "0")
+    monkeypatch.setattr(process, "_sycl_gpu_available", lambda: False)
+
+    assert process.resolve_raycast_device_spec() == "CPU:0"
+    assert "Raycast device resolved: AUTO -> CPU:0" in caplog.text
+
+
+def test_resolve_device_cpu_logs_explicit_selection(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    monkeypatch.setenv("GCODEZAA_RAYCAST_DEVICE", "cpu:0")
+    monkeypatch.setenv("GCODEZAA_REQUIRE_GPU", "0")
+
+    assert process.resolve_raycast_device_spec() == "CPU:0"
+    assert "Raycast device resolved: CPU:0" in caplog.text

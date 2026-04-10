@@ -68,11 +68,11 @@ MIN_SEGMENT_LEN = 0.2       # Ignoriere Vektoren unter 0.15mm für reine Winkelk
 ARC_WELDER_EXE = "ArcWelder.exe"
 AW_DYNAMIC_RES = True       # Aktiviere Dynamic Resolution (-d)
 AW_MAX_ERROR = 0.06          # Resolution (-r): Max. erlaubte Abweichung in mm (tighter for fine details like 3DBenchy)
-AW_TOLERANCE = 0.12         # Tolerance (-t): Arc Fitting Toleranz in % (Decimal → 0.1=10%)
+AW_TOLERANCE = 0.10         # Tolerance (-t): Arc Fitting Toleranz in % (Decimal → 0.1=10%)
 
 # --- ARTIFACT PREVENTION FOR ARC FITTING ---
 ARC_MIN_LENGTH = 1.0        # Minimum arc length in mm (prevent arcing tiny segments)
-ARC_MIN_CURVE_RADIUS = 2.0  # Minimum curve radius in mm (don't arc very tight curves)
+ARC_MIN_CURVE_RADIUS = 1.0  # Minimum curve radius in mm (don't arc very tight curves)
 
 # --- TRUE SURFACE FOLLOWING SAFETY ---
 HARD_MAX_SMOOTHING_ANGLE = 20.0
@@ -1079,6 +1079,18 @@ if __name__ == "__main__":
         if GCODEZAA_AVAILABLE:
             logging.info("[PIPELINE] Stage 2: GCodeZAA Full Surface Raycasting + Z-Compensation")
             try:
+                stage2_env_keys = [
+                    "GCODEZAA_RAYCAST_DEVICE",
+                    "GCODEZAA_REQUIRE_GPU",
+                    "GCODEZAA_SAMPLE_DISTANCE_MM",
+                    "GCODEZAA_MAX_SEGMENT_SAMPLES",
+                    "GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM",
+                ]
+                stage2_env_snapshot = ", ".join(
+                    f"{key}={os.getenv(key, '<default>')}" for key in stage2_env_keys
+                )
+                logging.info(f"[GCodeZAA] Stage 2 runtime env: {stage2_env_snapshot}")
+
                 model_dir = os.path.join(script_dir, "stl_models")
 
                 if not os.path.isdir(model_dir):

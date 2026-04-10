@@ -11,7 +11,8 @@ from gcodezaa.process import (
     _should_apply_surface_following,
     process_line,
 )
-from gcodezaa.surface_analysis import EdgeDetector, MAX_SEGMENT_SAMPLES, SurfaceAnalyzer
+from gcodezaa import surface_analysis
+from gcodezaa.surface_analysis import MAX_SEGMENT_SAMPLES, SurfaceAnalyzer
 
 
 class _CountingAnalyzer:
@@ -71,17 +72,16 @@ def test_should_apply_surface_following_requires_qualifying_move():
 
 def test_process_line_skips_raycast_for_non_extrusion_moves():
     analyzer = _CountingAnalyzer()
-    edge_detector = EdgeDetector()
 
     travel_ctx = _context_for_line("G1 X10 Y0 F1800\n")
     travel_ctx.relative_extrusion = False
     travel_ctx.last_e = 3.0
-    process_line(travel_ctx, analyzer, edge_detector)
+    process_line(travel_ctx, analyzer)
 
     same_e_ctx = _context_for_line("G1 X20 Y0 E3.0 F1800\n")
     same_e_ctx.relative_extrusion = False
     same_e_ctx.last_e = 3.0
-    process_line(same_e_ctx, analyzer, edge_detector)
+    process_line(same_e_ctx, analyzer)
 
     assert analyzer.calls == 0
 
@@ -116,3 +116,9 @@ def test_analyze_segment_batch_skips_implausible_segments():
     )
 
     assert analysis == []
+
+
+def test_surface_follow_segment_limit_sanitization_bounds():
+    assert surface_analysis._sanitize_surface_follow_segment_limit(1.0) == 10.0
+    assert surface_analysis._sanitize_surface_follow_segment_limit(1000.0) == 1000.0
+    assert surface_analysis._sanitize_surface_follow_segment_limit(999999.0) == 5000.0

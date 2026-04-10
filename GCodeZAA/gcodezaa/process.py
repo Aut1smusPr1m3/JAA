@@ -1,6 +1,6 @@
 from gcodezaa.context import ProcessorContext
 from gcodezaa.extrusion import Extrusion, decompose_arc
-from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
+from gcodezaa.surface_analysis import SurfaceAnalyzer
 from gcodezaa.config import MIN_BUILDPLATE_Z
 from gcodezaa.slicer_syntax import SlicerSyntax
 import os
@@ -233,6 +233,7 @@ def resolve_raycast_device_spec() -> str:
 
     if requested == "AUTO":
         if _sycl_gpu_available():
+            logger.info("[GCodeZAA] Raycast device resolved: AUTO -> SYCL:0 (SYCL GPU detected)")
             return "SYCL:0"
         if require_gpu:
             msg = (
@@ -241,10 +242,12 @@ def resolve_raycast_device_spec() -> str:
                 else "GCODEZAA_REQUIRE_GPU is set but no SYCL GPU was detected"
             )
             raise RuntimeError(msg)
+        logger.info("[GCodeZAA] Raycast device resolved: AUTO -> CPU:0 (no SYCL GPU detected)")
         return "CPU:0"
 
     if requested.startswith("SYCL"):
         if _sycl_gpu_available():
+            logger.info("[GCodeZAA] Raycast device resolved: %s", requested)
             return requested
         if require_gpu:
             msg = (
@@ -260,6 +263,7 @@ def resolve_raycast_device_spec() -> str:
         return "CPU:0"
 
     if requested.startswith("CPU"):
+        logger.info("[GCodeZAA] Raycast device resolved: %s", requested)
         return requested
 
     logger.warning(
@@ -545,7 +549,6 @@ def process_gcode(
     
     # Initialize surface analysis with batching support
     surface_analyzer = SurfaceAnalyzer(ctx.active_object, ctx.active_object_device)
-    edge_detector = EdgeDetector()
 
     process_start, process_end, reason = detect_processing_window(ctx.gcode, ctx.syntax)
     logger.info(
@@ -560,7 +563,7 @@ def process_gcode(
 
     ctx.gcode_line = process_start
     while ctx.gcode_line <= process_end and ctx.gcode_line < len(ctx.gcode):
-        process_line(ctx, surface_analyzer, edge_detector)
+        process_line(ctx, surface_analyzer)
         ctx.gcode_line += 1
 
     return ctx.gcode
@@ -599,7 +602,7 @@ def load_object(
     return scene, device
 
 
-def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_detector: EdgeDetector):
+def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
     write_back = ""
     ctx.extrusion = []
     ctx.gcode[ctx.gcode_line] = ctx.line.strip() + "\n"
