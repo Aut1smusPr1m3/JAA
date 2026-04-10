@@ -14,6 +14,7 @@ from Ultra_Optimizer import (
     sidecar_hash_matches_file,
     sidecar_path_for_gcode,
     update_sidecar_stage3_status,
+    validate_sidecar_metadata,
     write_sidecar_metadata,
 )
 
@@ -196,3 +197,63 @@ def test_stage2_to_stage3_sidecar_lifecycle_preserves_stage2_fields(tmp_path: Pa
     assert final_meta["selected_model"] == "Model.stl"
     assert final_meta["stage2_input_sha256"] == "input_sha"
     assert final_meta["stage_3"] == "SKIPPED (ArcWelder unavailable)"
+
+
+def test_validate_sidecar_metadata_passes_when_hashes_match(tmp_path: Path):
+    gcode_file = tmp_path / "sidecar_ok.gcode"
+    gcode_file.write_text("G1 X1 Y1 E0.1\n", encoding="utf-8")
+
+    metadata = build_stage2_metadata(
+        ["G1 X1 Y1 E0.1\n"],
+        selected_model="Model.stl",
+        stage2_input_sha256="input_sha",
+        stage2_output_sha256=_hash_file(str(gcode_file)),
+    )
+    write_sidecar_metadata(str(gcode_file), metadata)
+
+    valid, msg = validate_sidecar_metadata(str(gcode_file), metadata)
+    assert valid is True
+    assert msg == "ok"
+
+
+def test_validate_sidecar_metadata_fails_on_stage2_hash_mismatch(tmp_path: Path):
+    gcode_file = tmp_path / "sidecar_bad.gcode"
+    gcode_file.write_text("G1 X1 Y1 E0.1\n", encoding="utf-8")
+
+    metadata = build_stage2_metadata(
+        ["G1 X1 Y1 E0.1\n"],
+        selected_model="Model.stl",
+        stage2_input_sha256="input_sha",
+        stage2_output_sha256="bad_hash",
+    )
+    write_sidecar_metadata(str(gcode_file), metadata)
+
+    valid, msg = validate_sidecar_metadata(str(gcode_file), metadata)
+    assert valid is False
+    assert "stage2_output_sha256" in msg
+
+
+def test_validate_sidecar_metadata_accepts_final_stage3_hash(tmp_path: Path):
+    gcode_file = tmp_path / "sidecar_stage3.gcode"
+    gcode_file.write_text("G1 X1 Y1 E0.1\n", encoding="utf-8")
+
+    metadata = build_stage2_metadata(
+        ["G1 X1 Y1 E0.1\n"],
+        selected_model="Model.stl",
+        stage2_input_sha256="input_sha",
+        stage2_output_sha256=_hash_file(str(gcode_file)),
+    )
+    write_sidecar_metadata(str(gcode_file), metadata)
+
+    # Simulate post-stage2 mutation (e.g. ArcWelder or safety rewrite).
+    gcode_file.write_text("G1 X2 Y2 E0.2\n", encoding="utf-8")
+    metadata["stage3_output_sha256"] = _hash_file(str(gcode_file))
+    write_sidecar_metadata(str(gcode_file), metadata)
+
+    valid, msg = validate_sidecar_metadata(
+        str(gcode_file),
+        metadata,
+        check_stage2_file_hash=False,
+    )
+    assert valid is True
+    assert msg == "ok"

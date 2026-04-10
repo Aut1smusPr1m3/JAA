@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.2.1-alpha.5 - Printable window boundaries and sidecar integrity
+
+### Added
+- Printable-window detection for both stages using marker precedence:
+  - `; EXECUTABLE_BLOCK_START/END` first
+  - fallback to `; printing object ...` / `; stop printing object ...`
+- Sidecar metadata integrity validation with schema/hash checks.
+- New regression tests:
+  - `test_machine_gcode_window.py`
+  - extended `test_ultra_optimizer_stage2.py`
+
+### Changed
+- Stage 1 now leaves machine start/end G-code unmodified and optimizes only the printable window.
+- Stage 2 now primes context state from pre-window lines and processes only printable window.
+- Stage 2 no longer injects banner comments that shift line indices.
+- Heuristic Z-AA remnants were removed from Stage 1 configuration.
+- Smoothing angle policy updated for realistic nozzle clearance:
+  - default `15deg`, hard cap `20deg`.
+
+### Validation
+- `python -m pytest -q`
+- Result: `62 passed, 3 skipped`
+- Repeatable benchy run (`scripts/perf/profile_benchy.sh`):
+  - machine start/end sections unchanged
+  - `negative_z_commands=0`
+  - sidecar final validation: `ok`
+
 ## v0.2.1-alpha.4 - GPU acceleration groundwork (SYCL device routing)
 
 ### Added

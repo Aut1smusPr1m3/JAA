@@ -66,4 +66,4 @@ def test_process_gcode_without_executable_markers_succeeds():
     result = process_gcode(gcode_without_markers, ".")
 
     assert len(result) == len(gcode_without_markers)
-    assert result[0].startswith("; GCodeZAA Enhanced")
+    assert result[0] == gcode_without_markers[0]

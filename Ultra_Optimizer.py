@@ -32,18 +32,14 @@ gcodezaa_path = os.path.join(script_dir, "GCodeZAA")
 try:
     if os.path.exists(gcodezaa_path):
         sys.path.insert(0, gcodezaa_path)
-        from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
         from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE, MIN_BUILDPLATE_Z
-        ZAA_ENABLED = True
         logging.info("[ZAA] Z-Anti-Aliasing module loaded successfully")
     else:
-        ZAA_ENABLED = False
-        DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
+        DEFAULT_MAX_SMOOTHING_ANGLE = 15.0
         MIN_BUILDPLATE_Z = 0.0
         logging.warning("[ZAA] GCodeZAA directory not found - Z-Anti-Aliasing disabled")
 except (ImportError, ModuleNotFoundError) as e:
-    ZAA_ENABLED = False
-    DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
+    DEFAULT_MAX_SMOOTHING_ANGLE = 15.0
     MIN_BUILDPLATE_Z = 0.0
     logging.warning(f"[ZAA] Import failed ({e}) - Z-Anti-Aliasing disabled")
 
@@ -78,19 +74,16 @@ AW_TOLERANCE = 0.12         # Tolerance (-t): Arc Fitting Toleranz in % (Decimal
 ARC_MIN_LENGTH = 1.0        # Minimum arc length in mm (prevent arcing tiny segments)
 ARC_MIN_CURVE_RADIUS = 2.0  # Minimum curve radius in mm (don't arc very tight curves)
 
-# --- Z-ANTI-ALIASING CONFIGURATION ---
-ENABLE_ZAA = ZAA_ENABLED and True       # Enable enhanced surface contouring
-ZAA_LAYER_HEIGHT = 0.2                  # Expected layer height in mm
-ZAA_RESOLUTION = 0.05                   # Ray casting resolution in mm
-ZAA_SMOOTH_NORMALS = 3                  # Normal smoothing window (0=disabled)
-ZAA_MIN_ANGLE_FOR_ZAA = 5.0            # Only apply ZAA if surface angle > this (degrees)
-HARD_MAX_SMOOTHING_ANGLE = 45.0
-ZAA_MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # Hard-capped for print-head safety
-ZAA_Z_OFFSET_PER_ANGLE = 0.01           # Z offset in mm per degree of surface angle (for heuristic ZAA)
-ZAA_VERBOSE_LOGGING = False             # Disable verbose tensor batch logging for performance
+# --- TRUE SURFACE FOLLOWING SAFETY ---
+HARD_MAX_SMOOTHING_ANGLE = 20.0
+ZAA_MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # degrees from vertical with full Z offset allowance
 G1_PATTERN = re.compile(r'([XYZ])([-+]?\d*\.\d+|[-+]?\d+)')
 ARC_PATTERN = re.compile(r'([XYZIJKF])([-+]?\d*\.\d+|[-+]?\d+)')  # G2/G3 arc parameters
 Z_PARAM_PATTERN = re.compile(r'(^|[ \t])Z([-+]?(?:\d+(?:\.\d*)?|\.\d+))')
+PRINT_OBJECT_START_RE = re.compile(r'^\s*;\s*printing object\b', re.IGNORECASE)
+PRINT_OBJECT_STOP_RE = re.compile(r'^\s*;\s*stop printing object\b', re.IGNORECASE)
+EXECUTABLE_BLOCK_START_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_START\b', re.IGNORECASE)
+EXECUTABLE_BLOCK_END_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_END\b', re.IGNORECASE)
 
 # --- G2/G3 ARC COMMAND SUPPORT ---
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
@@ -416,6 +409,84 @@ def detect_ironing_sections(gcode_lines):
     
     return ironing_sections
 
+
+def detect_machine_print_window(gcode_lines):
+    """Detect inclusive printable object window while preserving machine start/end blocks."""
+    executable_starts = [
+        idx for idx, line in enumerate(gcode_lines) if EXECUTABLE_BLOCK_START_RE.search(line)
+    ]
+    executable_ends = [
+        idx for idx, line in enumerate(gcode_lines) if EXECUTABLE_BLOCK_END_RE.search(line)
+    ]
+    if executable_starts:
+        start = executable_starts[0]
+        end_candidates = [idx for idx in executable_ends if idx >= start]
+        end = end_candidates[-1] if end_candidates else len(gcode_lines) - 1
+        return start, end, "executable-block"
+
+    print_starts = [idx for idx, line in enumerate(gcode_lines) if PRINT_OBJECT_START_RE.search(line)]
+    print_stops = [idx for idx, line in enumerate(gcode_lines) if PRINT_OBJECT_STOP_RE.search(line)]
+    if print_starts:
+        start = print_starts[0]
+        end_candidates = [idx for idx in print_stops if idx >= start]
+        end = end_candidates[-1] if end_candidates else print_starts[-1]
+        return start, end, "printing-object-comments"
+
+    return 0, len(gcode_lines) - 1, "full-file"
+
+
+def _prime_stage1_state(lines, process_start):
+    """Prime Stage 1 positional/acceleration state using unmodified machine-start G-code."""
+    c_pos = [0.0, 0.0, 0.0]
+    local_max_accel = MAX_ACCEL_XY
+    c_acc = MAX_ACCEL_XY
+
+    for line in lines[:process_start]:
+        cmd_strip = line.split(';', 1)[0].strip()
+        if not cmd_strip:
+            continue
+
+        if cmd_strip.startswith('M204 '):
+            for p in cmd_strip.split()[1:]:
+                if p.startswith('S') or p.startswith('P'):
+                    val = float(p[1:])
+                    local_max_accel = min(val, MAX_ACCEL_XY)
+                    c_acc = local_max_accel
+                    break
+            continue
+
+        if cmd_strip.startswith('G1 ') or cmd_strip.startswith('G0 '):
+            has_xy, nx, ny, nz = safe_parse_g1(cmd_strip)
+            if has_xy or nz is not None:
+                c_pos = [
+                    nx if nx is not None else c_pos[0],
+                    ny if ny is not None else c_pos[1],
+                    nz if nz is not None else c_pos[2],
+                ]
+            continue
+
+        if cmd_strip.startswith('G2 ') or cmd_strip.startswith('G3 '):
+            is_cw = cmd_strip.startswith('G2 ')
+            has_xy, nx, ny, nz, _i, _j, _f = safe_parse_arc(cmd_strip[3:].strip(), is_cw)
+            if has_xy:
+                c_pos = [
+                    nx if nx is not None else c_pos[0],
+                    ny if ny is not None else c_pos[1],
+                    nz if nz is not None else c_pos[2],
+                ]
+            continue
+
+        if cmd_strip.startswith('G92 '):
+            has_xy, nx, ny, nz = safe_parse_g1(cmd_strip)
+            if has_xy or nz is not None:
+                c_pos = [
+                    nx if nx is not None else c_pos[0],
+                    ny if ny is not None else c_pos[1],
+                    nz if nz is not None else c_pos[2],
+                ]
+
+    return c_pos, local_max_accel, c_acc
+
 def restore_from_backup(gcode_file, backup_file):
     """Restore G-code from backup if processing failed."""
     try:
@@ -503,6 +574,29 @@ def sidecar_hash_matches_file(gcode_file, metadata, hash_key):
     return expected == _hash_file(gcode_file)
 
 
+def validate_sidecar_metadata(gcode_file, metadata, check_stage2_file_hash=True):
+    """Validate sidecar schema and hash fields against expected file state."""
+    if metadata is None:
+        return False, "missing metadata"
+
+    required = ["schema_version", "stage2_input_sha256", "stage2_output_sha256"]
+    missing = [key for key in required if not metadata.get(key)]
+    if missing:
+        return False, f"missing required key(s): {', '.join(missing)}"
+
+    if metadata.get("schema_version") != 1:
+        return False, f"unsupported schema_version={metadata.get('schema_version')}"
+
+    if check_stage2_file_hash and not sidecar_hash_matches_file(gcode_file, metadata, "stage2_output_sha256"):
+        return False, "stage2_output_sha256 does not match current G-code file"
+
+    stage3_hash = metadata.get("stage3_output_sha256")
+    if stage3_hash and not sidecar_hash_matches_file(gcode_file, metadata, "stage3_output_sha256"):
+        return False, "stage3_output_sha256 does not match current G-code file"
+
+    return True, "ok"
+
+
 def invalidate_stale_sidecar(gcode_file, current_stage2_input_sha256):
     """Remove existing sidecar when it does not match current Stage 2 input hash."""
     sidecar = sidecar_path_for_gcode(gcode_file)
@@ -562,19 +656,27 @@ def _replace_z_in_command(command, new_z):
     )
 
 
-def enforce_non_negative_z_in_gcode(gcode_file, min_z=MIN_BUILDPLATE_Z):
-    """Clamp motion and coordinate-set commands so no Z value goes below build plate."""
+def enforce_non_negative_z_in_gcode(gcode_file, min_z=MIN_BUILDPLATE_Z, process_window=None):
+    """Clamp motion and coordinate-set commands in printable window so no Z goes below build plate."""
     with open(gcode_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
+
+    if process_window is None:
+        process_window = detect_machine_print_window(lines)[:2]
+    process_start, process_end = process_window
 
     absolute_positioning = True
     current_z = float(min_z)
     changes = 0
     out = []
 
-    for raw_line in lines:
+    for idx, raw_line in enumerate(lines):
         stripped = raw_line.rstrip("\r\n")
         newline = raw_line[len(stripped):] or "\n"
+
+        if idx < process_start or idx > process_end:
+            out.append(raw_line)
+            continue
 
         if ";" in stripped:
             command, comment = stripped.split(";", 1)
@@ -631,16 +733,23 @@ def enforce_non_negative_z_in_gcode(gcode_file, min_z=MIN_BUILDPLATE_Z):
     return changes
 
 
-def count_negative_z_commands(gcode_file, min_z=MIN_BUILDPLATE_Z):
-    """Return count of commands that still request Z below the build plate."""
+def count_negative_z_commands(gcode_file, min_z=MIN_BUILDPLATE_Z, process_window=None):
+    """Return count of printable-window commands that request Z below the build plate."""
     with open(gcode_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
+
+    if process_window is None:
+        process_window = detect_machine_print_window(lines)[:2]
+    process_start, process_end = process_window
 
     absolute_positioning = True
     current_z = float(min_z)
     negatives = 0
 
-    for raw_line in lines:
+    for idx, raw_line in enumerate(lines):
+        if idx < process_start or idx > process_end:
+            continue
+
         command = raw_line.split(";", 1)[0].strip()
         if not command:
             continue
@@ -712,6 +821,14 @@ def process_gcode(file_path):
     total_lines = len(lines)
     logging.info(f"G-Code in RAM geladen. Zeilen: {total_lines}")
 
+    process_start, process_end, window_source = detect_machine_print_window(lines)
+    logging.info(
+        "[PIPELINE] Printable window (%s): lines %d-%d",
+        window_source,
+        process_start,
+        process_end,
+    )
+
     # === DETECT IRONING SECTIONS EARLY ===
     ironing_sections = detect_ironing_sections(lines)
     ironing_ranges = [(start, end) for start, end in ironing_sections]
@@ -726,10 +843,8 @@ def process_gcode(file_path):
     logging.info(f"[PIPELINE] Stage 1: Kinematic-only mode (Z-compensation delegated to Stage 2 GCodeZAA)")
 
     optimized = []
-    c_pos = [0.0, 0.0, 0.0]
+    c_pos, local_max_accel, c_acc = _prime_stage1_state(lines, process_start)
     prev_vec = None
-    local_max_accel = MAX_ACCEL_XY 
-    c_acc = MAX_ACCEL_XY
 
     for i, line in enumerate(lines):
         raw = line.rstrip('\r\n')
@@ -739,6 +854,14 @@ def process_gcode(file_path):
         if not raw:
             optimized.append(nl)
             continue
+
+        if i < process_start or i > process_end:
+            optimized.append(raw + nl)
+            prev_vec = None
+            continue
+
+        if i == process_start:
+            prev_vec = None
         
         cmd_strip = raw.split(';', 1)[0].strip()
 
@@ -972,6 +1095,9 @@ if __name__ == "__main__":
                             f.writelines(enhanced_gcode)
 
                         sidecar_path = write_sidecar_metadata(gcode_file, stage2_metadata)
+                        sidecar_valid, sidecar_msg = validate_sidecar_metadata(gcode_file, stage2_metadata)
+                        if not sidecar_valid:
+                            raise RuntimeError(f"Stage 2 sidecar validation failed: {sidecar_msg}")
                         logging.info(f"[GCodeZAA] Stage 2 metadata sidecar written: {os.path.basename(sidecar_path)}")
 
                         logging.info("[PIPELINE] Stage 2 Complete ✓")
@@ -1066,7 +1192,9 @@ if __name__ == "__main__":
             stage_status["stage_3"] = "FAILED"
 
         # === SAFETY ENFORCEMENT: NEVER MOVE BELOW BUILD PLATE ===
-        clamped = enforce_non_negative_z_in_gcode(gcode_file, MIN_BUILDPLATE_Z)
+        with open(gcode_file, 'r', encoding='utf-8') as f:
+            process_window = detect_machine_print_window(f.readlines())[:2]
+        clamped = enforce_non_negative_z_in_gcode(gcode_file, MIN_BUILDPLATE_Z, process_window=process_window)
         if clamped > 0:
             logging.warning(
                 "[SAFETY] Clamped %d negative-Z command(s) to Z>=%.3fmm",
@@ -1076,7 +1204,7 @@ if __name__ == "__main__":
         else:
             logging.info("[SAFETY] No negative-Z commands detected")
 
-        remaining_negative = count_negative_z_commands(gcode_file, MIN_BUILDPLATE_Z)
+        remaining_negative = count_negative_z_commands(gcode_file, MIN_BUILDPLATE_Z, process_window=process_window)
         if remaining_negative > 0:
             raise RuntimeError(
                 f"Safety validation failed: {remaining_negative} negative-Z command(s) remain"
@@ -1088,6 +1216,14 @@ if __name__ == "__main__":
                 stage_status["stage_3"],
                 include_output_hash=True,
             )
+            final_sidecar = load_sidecar_metadata(gcode_file)
+            sidecar_valid, sidecar_msg = validate_sidecar_metadata(
+                gcode_file,
+                final_sidecar,
+                check_stage2_file_hash=False,
+            )
+            if not sidecar_valid:
+                raise RuntimeError(f"Final sidecar validation failed: {sidecar_msg}")
         
         # === POST-PROCESSING ANALYSIS ===
         logging.info("[PIPELINE] Generating post-processing statistics...")

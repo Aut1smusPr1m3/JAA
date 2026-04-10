@@ -2,6 +2,7 @@ from gcodezaa.context import ProcessorContext
 from gcodezaa.extrusion import Extrusion, decompose_arc
 from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
 from gcodezaa.config import MIN_BUILDPLATE_Z
+from gcodezaa.slicer_syntax import SlicerSyntax
 import os
 import re
 import math
@@ -13,6 +14,9 @@ except ModuleNotFoundError:
     open3d = None
 
 logger = logging.getLogger(__name__)
+
+PRINT_OBJECT_START_RE = re.compile(r"^\s*;\s*printing object\b", re.IGNORECASE)
+PRINT_OBJECT_STOP_RE = re.compile(r"^\s*;\s*stop printing object\b", re.IGNORECASE)
 
 
 def _normalize_device_spec(spec: str) -> str:
@@ -29,6 +33,135 @@ def _normalize_device_spec(spec: str) -> str:
         # Open3D raycasting acceleration is exposed via SYCL backends.
         return "SYCL:0"
     return value
+
+
+def detect_processing_window(gcode: list[str], syntax: SlicerSyntax) -> tuple[int, int, str]:
+    """Return inclusive [start,end] line indices for printable object region."""
+    executable_starts = [
+        idx
+        for idx, line in enumerate(gcode)
+        if line.startswith(syntax.executable_block_start)
+    ]
+    executable_ends = [
+        idx
+        for idx, line in enumerate(gcode)
+        if line.startswith(syntax.executable_block_end)
+    ]
+    if executable_starts:
+        start = executable_starts[0]
+        end_candidates = [idx for idx in executable_ends if idx >= start]
+        end = end_candidates[-1] if end_candidates else len(gcode) - 1
+        return start, end, "executable-block"
+
+    print_starts = [idx for idx, line in enumerate(gcode) if PRINT_OBJECT_START_RE.search(line)]
+    print_stops = [idx for idx, line in enumerate(gcode) if PRINT_OBJECT_STOP_RE.search(line)]
+    if print_starts:
+        start = print_starts[0]
+        end_candidates = [idx for idx in print_stops if idx >= start]
+        if end_candidates:
+            end = end_candidates[-1]
+        else:
+            end = print_starts[-1]
+        return start, end, "printing-object-comments"
+
+    return 0, len(gcode) - 1, "full-file"
+
+
+def _prime_context_state_for_line(ctx: ProcessorContext, line: str) -> None:
+    """Update context motion/extrusion state without modifying line content."""
+    if line.startswith(ctx.syntax.line_type):
+        ctx.line_type = line.removeprefix(ctx.syntax.line_type).strip()
+        return
+    if line.startswith(ctx.syntax.layer_change):
+        ctx.layer += 1
+        ctx.line_type = ctx.syntax.line_type_inner_wall
+        return
+    if line.startswith(ctx.syntax.z):
+        ctx.z = clamp_buildplate_z(float(line.removeprefix(ctx.syntax.z)))
+        return
+    if line.startswith(ctx.syntax.height):
+        ctx.height = float(line.removeprefix(ctx.syntax.height))
+        return
+    if line.startswith(ctx.syntax.width):
+        ctx.width = float(line.removeprefix(ctx.syntax.width))
+        return
+    if line.startswith(ctx.syntax.wipe_start):
+        ctx.wipe = True
+        return
+    if line.startswith(ctx.syntax.wipe_end):
+        ctx.wipe = False
+        return
+
+    if line.startswith("M82"):
+        ctx.relative_extrusion = False
+        return
+    if line.startswith("M83"):
+        ctx.relative_extrusion = True
+        return
+    if line.startswith("G90"):
+        ctx.relative_positioning = False
+        return
+    if line.startswith("G91"):
+        ctx.relative_positioning = True
+        return
+    if line.startswith("G92"):
+        args = parse_simple_args(line)
+        if "E" in args:
+            ctx.last_e = float(args["E"])
+        if "X" in args or "Y" in args or "Z" in args:
+            ctx.last_p = (
+                float(args.get("X", ctx.last_p[0])),
+                float(args.get("Y", ctx.last_p[1])),
+                clamp_buildplate_z(float(args.get("Z", ctx.last_p[2]))),
+            )
+        return
+
+    if line.startswith("G0 ") or line.startswith("G1 "):
+        args = parse_simple_args(line)
+        x = float(args["X"]) if "X" in args else None
+        y = float(args["Y"]) if "Y" in args else None
+        z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
+        if x is not None or y is not None or z is not None:
+            if ctx.relative_positioning:
+                ctx.last_p = (
+                    ctx.last_p[0] + (x or 0.0),
+                    ctx.last_p[1] + (y or 0.0),
+                    clamp_buildplate_z(ctx.last_p[2] + (z or 0.0)),
+                )
+            else:
+                ctx.last_p = (
+                    x if x is not None else ctx.last_p[0],
+                    y if y is not None else ctx.last_p[1],
+                    z if z is not None else ctx.last_p[2],
+                )
+
+        if "E" in args:
+            e_val = float(args["E"])
+            if ctx.relative_extrusion:
+                ctx.last_e += e_val
+            else:
+                ctx.last_e = e_val
+
+        return
+
+    if line.startswith("G2 ") or line.startswith("G3 "):
+        args = parse_simple_args(line)
+        x = float(args["X"]) if "X" in args else None
+        y = float(args["Y"]) if "Y" in args else None
+        z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
+        if x is not None or y is not None or z is not None:
+            ctx.last_p = (
+                x if x is not None else ctx.last_p[0],
+                y if y is not None else ctx.last_p[1],
+                z if z is not None else ctx.last_p[2],
+            )
+
+        if "E" in args:
+            e_val = float(args["E"])
+            if ctx.relative_extrusion:
+                ctx.last_e += e_val
+            else:
+                ctx.last_e = e_val
 
 
 def _sycl_devices() -> list[str]:
@@ -372,24 +505,22 @@ def process_gcode(
     # Initialize surface analysis with batching support
     surface_analyzer = SurfaceAnalyzer(ctx.active_object, ctx.active_object_device)
     edge_detector = EdgeDetector()
-    
-    has_executable_markers = any(
-        line.startswith(ctx.syntax.executable_block_start) for line in ctx.gcode
-    )
-    is_in_executable = not has_executable_markers
-    
-    while ctx.gcode_line < len(ctx.gcode):
-        if has_executable_markers and not is_in_executable and ctx.line.startswith(
-            ctx.syntax.executable_block_start
-        ):
-            is_in_executable = True
-        elif has_executable_markers and is_in_executable and ctx.line.startswith(ctx.syntax.executable_block_end):
-            break
-        elif is_in_executable:
-            process_line(ctx, surface_analyzer, edge_detector)
-        ctx.gcode_line += 1
 
-    ctx.gcode[0] = f"; GCodeZAA Enhanced - Tensor Batching, Physics Compensation, Vector Retraction, Non-planar Ironing\n" + ctx.gcode[0]
+    process_start, process_end, reason = detect_processing_window(ctx.gcode, ctx.syntax)
+    logger.info(
+        "[GCodeZAA] Processing window (%s): lines %d-%d",
+        reason,
+        process_start,
+        process_end,
+    )
+
+    for line in ctx.gcode[:process_start]:
+        _prime_context_state_for_line(ctx, line)
+
+    ctx.gcode_line = process_start
+    while ctx.gcode_line <= process_end and ctx.gcode_line < len(ctx.gcode):
+        process_line(ctx, surface_analyzer, edge_detector)
+        ctx.gcode_line += 1
 
     return ctx.gcode
 

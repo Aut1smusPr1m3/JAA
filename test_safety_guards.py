@@ -20,8 +20,8 @@ def test_clamp_buildplate_z_enforces_floor():
 
 
 def test_smoothing_angle_is_hard_capped_for_safety():
-    assert ZAA_MAX_SMOOTHING_ANGLE <= 45.0
-    assert SURFACE_MAX_SMOOTHING_ANGLE <= 45.0
+    assert ZAA_MAX_SMOOTHING_ANGLE <= 20.0
+    assert SURFACE_MAX_SMOOTHING_ANGLE <= 20.0
 
 
 def test_enforce_non_negative_z_clamps_absolute_moves(tmp_path: Path):

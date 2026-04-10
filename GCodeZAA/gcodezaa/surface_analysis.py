@@ -47,8 +47,8 @@ MAX_SAMPLE_DISTANCE = _env_float("GCODEZAA_MAX_SAMPLE_DISTANCE_MM", 1.0)   # mm 
 MAX_SEGMENT_SAMPLES = max(16, _env_int("GCODEZAA_MAX_SEGMENT_SAMPLES", 192))
 MAX_RAY_DISTANCE = 2.0  # mm maximum cast distance
 MAX_Z_OFFSET = 0.35  # mm maximum surface offset allowed
-HARD_MAX_SMOOTHING_ANGLE = 45.0
-MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # degrees from vertical beyond which smoothing is reduced
+HARD_MAX_SMOOTHING_ANGLE = 20.0
+MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # degrees from vertical where full offset is allowed
 NORMAL_SMOOTHING_WINDOW = 5  # samples for normal averaging
 SLOPE_SMOOTHING_WINDOW = 5  # samples for z-offset smoothing
 EDGE_THRESHOLD_ANGLE = 45  # degrees for edge detection
@@ -356,7 +356,7 @@ class SurfaceAnalyzer:
         This reduces ooze and string formation during retractions.
         """
         # Retract along surface normal, away from surface
-        # Scale by reasonable distance (layer height is a good heuristic)
+        # Scale by layer height for consistent non-planar behavior.
         scale = layer_height * 2.0  # Reasonable retraction distance
         return (
             surface_normal[0] * scale,
