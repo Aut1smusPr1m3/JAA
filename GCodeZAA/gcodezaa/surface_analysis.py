@@ -43,11 +43,11 @@ def _env_int(name: str, default: int) -> int:
 # Configuration
 SURFACE_SAMPLE_DISTANCE = _env_float("GCODEZAA_SAMPLE_DISTANCE_MM", 0.2)  # mm between raycasting points
 MIN_SAMPLE_DISTANCE = _env_float("GCODEZAA_MIN_SAMPLE_DISTANCE_MM", 0.08)  # mm minimum sample spacing
-MAX_SAMPLE_DISTANCE = _env_float("GCODEZAA_MAX_SAMPLE_DISTANCE_MM", 1.0)   # mm maximum sample spacing for long segments
+MAX_SAMPLE_DISTANCE = _env_float("GCODEZAA_MAX_SAMPLE_DISTANCE_MM", 0.5)   # mm maximum sample spacing for long segments
 MAX_SEGMENT_SAMPLES = max(16, _env_int("GCODEZAA_MAX_SEGMENT_SAMPLES", 384))
 MAX_SURFACE_FOLLOW_SEGMENT_MM = _env_float("GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM", 1000.0)
 MAX_RAY_DISTANCE = 2.0  # mm maximum cast distance
-MAX_Z_OFFSET = 0.35  # mm maximum surface offset allowed
+MAX_Z_OFFSET = 1.8  # mm maximum surface offset allowed
 HARD_MAX_SMOOTHING_ANGLE = 20.0
 MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # degrees from vertical where full offset is allowed
 NORMAL_SMOOTHING_WINDOW = 5  # samples for normal averaging
