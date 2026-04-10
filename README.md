@@ -35,6 +35,26 @@ Windows all-in-one bootstrap:
 python -m pytest -q
 ```
 
+## Performance tuning
+If Stage 2 raycasting is too slow on large files, tune sampling and profiling with env vars:
+
+```bash
+# Coarser sampling (higher is faster): default 0.2
+export GCODEZAA_SAMPLE_DISTANCE_MM=0.25
+
+# Hard cap of samples per segment (default 192)
+export GCODEZAA_MAX_SEGMENT_SAMPLES=128
+
+# Batch size for ray submissions (default 4096)
+export GCODEZAA_BATCH_RAY_SIZE=8192
+
+# Optional pipeline profiling
+export ULTRA_OPTIMIZER_PROFILE=1
+python Ultra_Optimizer.py input.gcode
+```
+
+Profiling output defaults to `ultra_optimizer_profile.prof` in repo root and can be opened with tools like `snakeviz`.
+
 ## Notes
 - Open3D is optional for advanced Stage 2 raycasting workflows.
 - ArcWelder integration requires ArcWelder.exe in repository root.

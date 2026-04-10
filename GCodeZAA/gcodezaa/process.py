@@ -27,6 +27,15 @@ ZAA_GENERATE_IRONING = True             # Generate ironing paths for surface-awa
 ZAA_LONGER_SMOOTHING_ENABLED = True     # Enable longer coherent smoothing lines
 ZAA_VERBOSE_TENSOR_LOGGING = False      # Disable tensor batch logging for performance
 
+SURFACE_FOLLOW_LINE_TYPES = {
+    # Ironing is always surface-following when enabled.
+    "ironing",
+    # Top/outer/inner walls may also follow surface when generation is enabled.
+    "top surface",
+    "outer wall",
+    "inner wall",
+}
+
 
 def parse_simple_args(gcode: str) -> dict:
     return dict(
@@ -125,6 +134,33 @@ def _segment_length(p1: tuple[float, float, float], p2: tuple[float, float, floa
     dy = p2[1] - p1[1]
     dz = p2[2] - p1[2]
     return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def _is_extruding_move(ctx: ProcessorContext, target_e: float | None) -> bool:
+    if target_e is None:
+        return False
+
+    if ctx.relative_extrusion:
+        return target_e > 0.0
+
+    return target_e > (float(ctx.last_e) + 1e-9)
+
+
+def _should_apply_surface_following(ctx: ProcessorContext, target_e: float | None) -> bool:
+    if ctx.active_object is None or ctx.wipe or ctx.relative_positioning:
+        return False
+
+    if not _is_extruding_move(ctx, target_e):
+        return False
+
+    line_type = ctx.line_type.lower()
+    if line_type not in SURFACE_FOLLOW_LINE_TYPES:
+        return False
+
+    if line_type == "ironing":
+        return True
+
+    return ZAA_GENERATE_IRONING
 
 
 def clamp_buildplate_z(z_value: float | None, min_z: float = MIN_BUILDPLATE_Z) -> float | None:
@@ -306,12 +342,17 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         target_z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
         target_e = float(args["E"]) if "E" in args else None
         target_f = float(args["F"]) if "F" in args else None
+        should_surface_follow = _should_apply_surface_following(ctx, target_e)
         
         # For non-zero XY moves, use batch surface analysis
         adjusted_z = target_z
         surface_analysis = None
         
-        if (surface_analyzer.scene is not None and target_x is not None and target_y is not None 
+        if (
+            should_surface_follow
+            and surface_analyzer.scene is not None
+            and target_x is not None
+            and target_y is not None
             and (target_x != ctx.last_p[0] or target_y != ctx.last_p[1])):
             # Batch analyze the segment
             segment_analysis = surface_analyzer.analyze_segment_batch(
@@ -369,24 +410,29 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         # Get feedrate and extrusion
         f = float(args["F"]) if "F" in args else None
         e = float(args["E"]) if "E" in args else None
+        should_surface_follow = _should_apply_surface_following(ctx, e)
         
-        # Decompose arc into waypoints with adaptive segment resolution
-        segment_length = 0.4
-        if ZAA_LONGER_SMOOTHING_ENABLED:
-            segment_length = max(0.2, min(0.75, ctx.height * 1.5))
+        # Only decompose and raycast arcs when we will actually apply surface-following output.
+        if should_surface_follow and surface_analyzer.scene is not None:
+            segment_length = 0.4
+            if ZAA_LONGER_SMOOTHING_ENABLED:
+                segment_length = max(0.2, min(0.75, ctx.height * 1.5))
 
-        waypoints = decompose_arc(
-            start_pos=ctx.last_p,
-            end_x=end_x,
-            end_y=end_y,
-            end_z=end_z,
-            center_i=center_i,
-            center_j=center_j,
-            radius=radius,
-            is_clockwise=is_clockwise,
-            segment_length=segment_length
-        )
-        
+            waypoints = decompose_arc(
+                start_pos=ctx.last_p,
+                end_x=end_x,
+                end_y=end_y,
+                end_z=end_z,
+                center_i=center_i,
+                center_j=center_j,
+                radius=radius,
+                is_clockwise=is_clockwise,
+                segment_length=segment_length
+            )
+
+        else:
+            waypoints = []
+
         # Batch analyze waypoints if we have multiple
         if len(waypoints) > 1 and surface_analyzer.scene is not None:
             arc_analysis = surface_analyzer.batch_analyze_points(
@@ -480,15 +526,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
 
     if (
         len(ctx.extrusion) == 1
-        and not ctx.wipe
-        and ctx.active_object is not None
-        and (
-            ctx.line_type == ctx.syntax.line_type_ironing
-            or ctx.line_type == ctx.syntax.line_type_top_surface
-            or ctx.line_type == ctx.syntax.line_type_outer_wall
-            or ctx.line_type == ctx.syntax.line_type_inner_wall
-        )
-        and not ctx.relative_positioning
+        and _should_apply_surface_following(ctx, ctx.extrusion[0].e)
         and ctx.extrusion[0].length() != 0
         and ctx.extrusion[0].e is not None
         and (ctx.extrusion[0].x is not None or ctx.extrusion[0].y is not None)

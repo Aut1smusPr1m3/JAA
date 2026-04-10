@@ -862,6 +862,15 @@ def process_gcode(file_path):
 if __name__ == "__main__":
     logging.info(f"Script started with arguments: {sys.argv}")
     logging.info(f"[SYSTEM] OrcaSlicer Post-Processing Mode")
+
+    profile_enabled = os.getenv("ULTRA_OPTIMIZER_PROFILE", "0").lower() in {"1", "true", "yes", "on"}
+    profiler = None
+    if profile_enabled:
+        import cProfile
+
+        profiler = cProfile.Profile()
+        profiler.enable()
+        logging.info("[PROFILE] cProfile enabled (set ULTRA_OPTIMIZER_PROFILE=0 to disable)")
     
     gcode_file = None
     
@@ -1127,3 +1136,24 @@ if __name__ == "__main__":
             if restore_from_backup(gcode_file, backup_file):
                 logging.info("[RECOVERY] Processing failed - restored from backup")
         sys.exit(1)
+    finally:
+        if profiler is not None:
+            import io
+            import pstats
+
+            profiler.disable()
+            default_profile_path = os.path.join(script_dir, "ultra_optimizer_profile.prof")
+            profile_path = os.getenv("ULTRA_OPTIMIZER_PROFILE_OUT", default_profile_path)
+            profile_sort = os.getenv("ULTRA_OPTIMIZER_PROFILE_SORT", "cumtime")
+            try:
+                top_n = int(os.getenv("ULTRA_OPTIMIZER_PROFILE_TOP", "30"))
+            except ValueError:
+                top_n = 30
+
+            profiler.dump_stats(profile_path)
+            profile_stream = io.StringIO()
+            stats = pstats.Stats(profiler, stream=profile_stream).sort_stats(profile_sort)
+            stats.print_stats(top_n)
+
+            logging.info("[PROFILE] Wrote profile stats: %s", profile_path)
+            logging.info("[PROFILE] Top %d (%s):\n%s", top_n, profile_sort, profile_stream.getvalue())

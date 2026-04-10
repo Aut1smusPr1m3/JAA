@@ -18,6 +18,25 @@ Common reasons:
 - missing `stl_models/` directory
 - no `.stl` files in `stl_models/`
 
+## Stage 2 is very slow / high CPU
+Use throughput controls:
+1. Increase sample spacing (fewer rays): `GCODEZAA_SAMPLE_DISTANCE_MM=0.25`
+2. Lower segment sample cap: `GCODEZAA_MAX_SEGMENT_SAMPLES=128`
+3. Increase batch size for cast submission: `GCODEZAA_BATCH_RAY_SIZE=8192`
+
+Example:
+```bash
+GCODEZAA_SAMPLE_DISTANCE_MM=0.25 \
+GCODEZAA_MAX_SEGMENT_SAMPLES=128 \
+python Ultra_Optimizer.py input.gcode
+```
+
+For deep diagnostics, enable built-in profiling:
+```bash
+ULTRA_OPTIMIZER_PROFILE=1 python Ultra_Optimizer.py input.gcode
+```
+This writes `ultra_optimizer_profile.prof` for analysis (e.g. with `snakeviz`).
+
 ## ArcWelder skipped
 Reason:
 - `ArcWelder.exe` missing from repository root.

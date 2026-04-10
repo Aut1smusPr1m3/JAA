@@ -6,6 +6,7 @@ and true non-planar ironing support.
 
 import math
 import logging
+import os
 import numpy as np
 from typing import Tuple, Optional, List, Dict
 from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE
@@ -17,10 +18,33 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r; using default=%s", name, value, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Invalid int for %s=%r; using default=%s", name, value, default)
+        return default
+
 # Configuration
-SURFACE_SAMPLE_DISTANCE = 0.05  # mm between raycasting points
-MIN_SAMPLE_DISTANCE = 0.05  # mm minimum sample spacing
-MAX_SAMPLE_DISTANCE = 0.5   # mm maximum sample spacing for long segments
+SURFACE_SAMPLE_DISTANCE = _env_float("GCODEZAA_SAMPLE_DISTANCE_MM", 0.2)  # mm between raycasting points
+MIN_SAMPLE_DISTANCE = _env_float("GCODEZAA_MIN_SAMPLE_DISTANCE_MM", 0.08)  # mm minimum sample spacing
+MAX_SAMPLE_DISTANCE = _env_float("GCODEZAA_MAX_SAMPLE_DISTANCE_MM", 1.0)   # mm maximum sample spacing for long segments
+MAX_SEGMENT_SAMPLES = max(16, _env_int("GCODEZAA_MAX_SEGMENT_SAMPLES", 192))
 MAX_RAY_DISTANCE = 2.0  # mm maximum cast distance
 MAX_Z_OFFSET = 0.35  # mm maximum surface offset allowed
 HARD_MAX_SMOOTHING_ANGLE = 45.0
@@ -28,7 +52,7 @@ MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)
 NORMAL_SMOOTHING_WINDOW = 5  # samples for normal averaging
 SLOPE_SMOOTHING_WINDOW = 5  # samples for z-offset smoothing
 EDGE_THRESHOLD_ANGLE = 45  # degrees for edge detection
-BATCH_RAY_SIZE = 1024  # Number of rays to process in one batch
+BATCH_RAY_SIZE = max(256, _env_int("GCODEZAA_BATCH_RAY_SIZE", 4096))  # Number of points to process in one batch
 
 
 class SurfaceAnalyzer:
@@ -44,12 +68,12 @@ class SurfaceAnalyzer:
     def _adaptive_sample_distance(self, distance: float, default: float) -> float:
         """Choose a sample spacing that balances detail and coherence for long paths."""
         if distance <= 1.0:
-            return max(MIN_SAMPLE_DISTANCE, default * 0.5)
+            return max(MIN_SAMPLE_DISTANCE, default)
         if distance <= 5.0:
-            return max(MIN_SAMPLE_DISTANCE, min(default, 0.1))
+            return min(MAX_SAMPLE_DISTANCE, max(MIN_SAMPLE_DISTANCE, default))
         if distance <= 20.0:
-            return min(MAX_SAMPLE_DISTANCE, max(default, 0.15))
-        return MAX_SAMPLE_DISTANCE
+            return min(MAX_SAMPLE_DISTANCE, max(default, 0.2))
+        return min(MAX_SAMPLE_DISTANCE, max(default, 0.35))
         
     def batch_analyze_points(
         self, 
@@ -66,40 +90,50 @@ class SurfaceAnalyzer:
         Returns:
             List of analysis results with z_offset, confidence, normal, normal_x/y/z
         """
-        if self.scene is None or not points:
+        if self.scene is None or len(points) == 0:
             return [{"z_offset": 0, "confidence": 0, "normal": (0, 0, 1), 
                     "normal_x": 0, "normal_y": 0, "normal_z": 1} for _ in points]
+
+        points_np = np.asarray(points, dtype=np.float32)
+        if points_np.ndim != 2 or points_np.shape[1] != 3:
+            raise ValueError("points must be an array-like of shape (N, 3)")
         
         results = []
         max_z_dev = layer_height / 2.0
         
         # Process in batches for memory efficiency
-        for batch_start in range(0, len(points), BATCH_RAY_SIZE):
-            batch_end = min(batch_start + BATCH_RAY_SIZE, len(points))
-            batch_points = points[batch_start:batch_end]
-            
-            # Create rays for upward direction (0, 0, 1)
-            rays_up = []
-            for x, y, z in batch_points:
-                rays_up.append([x, y, z, 0, 0, 1])
-            
-            # Create rays for downward direction (0, 0, -1)
-            rays_down = []
-            for x, y, z in batch_points:
-                rays_down.append([x, y, z, 0, 0, -1])
+        for batch_start in range(0, len(points_np), BATCH_RAY_SIZE):
+            batch_end = min(batch_start + BATCH_RAY_SIZE, len(points_np))
+            batch_points = points_np[batch_start:batch_end]
+            count = batch_points.shape[0]
+
+            # Submit up/down rays in one cast to reduce Python<->Open3D overhead.
+            rays = np.empty((count * 2, 6), dtype=np.float32)
+            rays[:count, :3] = batch_points
+            rays[:count, 3:] = (0.0, 0.0, 1.0)
+            rays[count:, :3] = batch_points
+            rays[count:, 3:] = (0.0, 0.0, -1.0)
             
             # Execute batch raycasts
             try:
-                rays_up_tensor = open3d.core.Tensor(rays_up, dtype=open3d.core.Dtype.Float32)
-                rays_down_tensor = open3d.core.Tensor(rays_down, dtype=open3d.core.Dtype.Float32)
-                
-                result_up = self.scene.cast_rays(rays_up_tensor)
-                result_down = self.scene.cast_rays(rays_down_tensor)
+                rays_tensor = open3d.core.Tensor(rays, dtype=open3d.core.Dtype.Float32)
+                cast_result = self.scene.cast_rays(rays_tensor)
+
+                t_hit = cast_result["t_hit"].numpy()
+                normals = cast_result["primitive_normals"].numpy()
+                dist_up = t_hit[:count]
+                dist_down = t_hit[count:]
+                normals_up = normals[:count]
+                normals_down = normals[count:]
                 
                 # Process results
-                for i in range(len(batch_points)):
+                for i in range(count):
                     z_offset, confidence, normal = self._select_surface_hit(
-                        result_up, result_down, i, max_z_dev
+                        float(dist_up[i]),
+                        float(dist_down[i]),
+                        normals_up[i],
+                        normals_down[i],
+                        max_z_dev,
                     )
                     
                     # Apply normal smoothing
@@ -126,40 +160,36 @@ class SurfaceAnalyzer:
                 results.extend([
                     {"z_offset": 0, "confidence": 0, "normal": (0, 0, 1), 
                      "normal_x": 0, "normal_y": 0, "normal_z": 1} 
-                    for _ in batch_points
+                    for _ in range(count)
                 ])
         
         return results
     
-    def _select_surface_hit(self, result_up, result_down, index: int, max_z_dev: float) -> Tuple[float, float, Tuple]:
+    def _select_surface_hit(
+        self,
+        dist_up: float,
+        dist_down: float,
+        normal_up: np.ndarray,
+        normal_down: np.ndarray,
+        max_z_dev: float,
+    ) -> Tuple[float, float, Tuple]:
         """Select the appropriate surface based on raycasting results."""
-        dist_up = float(result_up["t_hit"][index].item())
-        dist_down = float(result_down["t_hit"][index].item())
-        
-        normal_up = (
-            float(result_up["primitive_normals"][index][0].item()),
-            float(result_up["primitive_normals"][index][1].item()),
-            float(result_up["primitive_normals"][index][2].item())
-        )
-        normal_down = (
-            float(result_down["primitive_normals"][index][0].item()),
-            float(result_down["primitive_normals"][index][1].item()),
-            float(result_down["primitive_normals"][index][2].item())
-        )
+        normal_up_t = (float(normal_up[0]), float(normal_up[1]), float(normal_up[2]))
+        normal_down_t = (float(normal_down[0]), float(normal_down[1]), float(normal_down[2]))
         
         # Prefer upper surface if within tolerance and facing up
-        if normal_up[2] > 0.1 and 0 < dist_up <= max_z_dev:
+        if math.isfinite(dist_up) and normal_up_t[2] > 0.1 and 0 < dist_up <= max_z_dev:
             z_offset = min(max_z_dev, dist_up)
-            confidence = min(1.0, abs(normal_up[2]) * 1.5)
-            z_offset = self._clamp_z_offset(z_offset, normal_up)
-            return z_offset, confidence, normal_up
+            confidence = min(1.0, abs(normal_up_t[2]) * 1.5)
+            z_offset = self._clamp_z_offset(z_offset, normal_up_t)
+            return z_offset, confidence, normal_up_t
 
         # Fall back to lower surface if facing down
-        if normal_down[2] < -0.1 and 0 < dist_down <= max_z_dev:
+        if math.isfinite(dist_down) and normal_down_t[2] < -0.1 and 0 < dist_down <= max_z_dev:
             z_offset = max(-max_z_dev, -dist_down)
-            confidence = min(1.0, abs(normal_down[2]) * 1.5)
-            z_offset = self._clamp_z_offset(z_offset, normal_down)
-            return z_offset, confidence, normal_down
+            confidence = min(1.0, abs(normal_down_t[2]) * 1.5)
+            z_offset = self._clamp_z_offset(z_offset, normal_down_t)
+            return z_offset, confidence, normal_down_t
 
         return 0, 0, (0, 0, 1)
     
@@ -265,27 +295,40 @@ class SurfaceAnalyzer:
 
         sample_distance = self._adaptive_sample_distance(distance, sample_distance)
         sample_distance = max(MIN_SAMPLE_DISTANCE, min(sample_distance, MAX_SAMPLE_DISTANCE))
-        num_points = max(3, int(distance / sample_distance) + 1)
-        points = []
+        requested_points = max(2, int(distance / sample_distance) + 1)
+        num_points = min(MAX_SEGMENT_SAMPLES, requested_points)
 
-        for i in range(num_points):
-            t = i / (num_points - 1)
-            x = x1 + dx * t
-            y = y1 + dy * t
-            points.append((x, y, z))
+        if num_points < requested_points:
+            sample_distance = distance / max(1, num_points - 1)
+            logger.debug(
+                "Segment sampling capped: distance=%.2fmm requested=%d capped=%d spacing=%.3fmm",
+                distance,
+                requested_points,
+                num_points,
+                sample_distance,
+            )
+
+        t_values = np.linspace(0.0, 1.0, num_points, dtype=np.float32)
+        points = np.column_stack(
+            (
+                x1 + dx * t_values,
+                y1 + dy * t_values,
+                np.full(num_points, z, dtype=np.float32),
+            )
+        )
 
         # Batch analyze all points
         analysis = self.batch_analyze_points(points, layer_height)
         analysis = self._smooth_analysis(analysis)
 
         # Enrich with position data
-        for i, (x, y, z) in enumerate(points):
+        for i, (x, y, z_value) in enumerate(points):
             if i < len(analysis):
                 analysis[i].update({
-                    "x": x,
-                    "y": y,
-                    "z": z,
-                    "adjusted_z": z + analysis[i]["z_offset"],
+                    "x": float(x),
+                    "y": float(y),
+                    "z": float(z_value),
+                    "adjusted_z": float(z_value + analysis[i]["z_offset"]),
                     "index": i,
                     "total": num_points
                 })
