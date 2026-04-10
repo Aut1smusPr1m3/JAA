@@ -33,16 +33,18 @@ try:
     if os.path.exists(gcodezaa_path):
         sys.path.insert(0, gcodezaa_path)
         from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
-        from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE
+        from gcodezaa.config import DEFAULT_MAX_SMOOTHING_ANGLE, MIN_BUILDPLATE_Z
         ZAA_ENABLED = True
         logging.info("[ZAA] Z-Anti-Aliasing module loaded successfully")
     else:
         ZAA_ENABLED = False
         DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
+        MIN_BUILDPLATE_Z = 0.0
         logging.warning("[ZAA] GCodeZAA directory not found - Z-Anti-Aliasing disabled")
 except (ImportError, ModuleNotFoundError) as e:
     ZAA_ENABLED = False
     DEFAULT_MAX_SMOOTHING_ANGLE = 40.0
+    MIN_BUILDPLATE_Z = 0.0
     logging.warning(f"[ZAA] Import failed ({e}) - Z-Anti-Aliasing disabled")
 
 # GCodeZAA Integration (Optional Auto-Enhancement)
@@ -82,11 +84,13 @@ ZAA_LAYER_HEIGHT = 0.2                  # Expected layer height in mm
 ZAA_RESOLUTION = 0.05                   # Ray casting resolution in mm
 ZAA_SMOOTH_NORMALS = 3                  # Normal smoothing window (0=disabled)
 ZAA_MIN_ANGLE_FOR_ZAA = 5.0            # Only apply ZAA if surface angle > this (degrees)
-ZAA_MAX_SMOOTHING_ANGLE = DEFAULT_MAX_SMOOTHING_ANGLE  # Maximum safe smoothing angle from vertical
+HARD_MAX_SMOOTHING_ANGLE = 45.0
+ZAA_MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # Hard-capped for print-head safety
 ZAA_Z_OFFSET_PER_ANGLE = 0.01           # Z offset in mm per degree of surface angle (for heuristic ZAA)
 ZAA_VERBOSE_LOGGING = False             # Disable verbose tensor batch logging for performance
 G1_PATTERN = re.compile(r'([XYZ])([-+]?\d*\.\d+|[-+]?\d+)')
 ARC_PATTERN = re.compile(r'([XYZIJKF])([-+]?\d*\.\d+|[-+]?\d+)')  # G2/G3 arc parameters
+Z_PARAM_PATTERN = re.compile(r'(^|[ \t])Z([-+]?(?:\d+(?:\.\d*)?|\.\d+))')
 
 # --- G2/G3 ARC COMMAND SUPPORT ---
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
@@ -541,6 +545,135 @@ def enforce_stage1_success_or_raise(stage_status):
     stage_status["stage_3"] = "SKIPPED (stage 1 failed)"
     raise RuntimeError("Stage 1 failed validation")
 
+
+def _format_gcode_decimal(value):
+    text = f"{value:.5f}".rstrip("0").rstrip(".")
+    if text in ("", "-0", "+0"):
+        return "0"
+    return text
+
+
+def _replace_z_in_command(command, new_z):
+    formatted = _format_gcode_decimal(new_z)
+    return Z_PARAM_PATTERN.sub(
+        lambda m: f"{m.group(1)}Z{formatted}",
+        command,
+        count=1,
+    )
+
+
+def enforce_non_negative_z_in_gcode(gcode_file, min_z=MIN_BUILDPLATE_Z):
+    """Clamp motion and coordinate-set commands so no Z value goes below build plate."""
+    with open(gcode_file, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    absolute_positioning = True
+    current_z = float(min_z)
+    changes = 0
+    out = []
+
+    for raw_line in lines:
+        stripped = raw_line.rstrip("\r\n")
+        newline = raw_line[len(stripped):] or "\n"
+
+        if ";" in stripped:
+            command, comment = stripped.split(";", 1)
+            comment = ";" + comment
+        else:
+            command = stripped
+            comment = ""
+
+        cmd = command.strip()
+        if not cmd:
+            out.append(stripped + newline)
+            continue
+
+        token = cmd.split()[0].upper()
+        if token == "G90":
+            absolute_positioning = True
+        elif token == "G91":
+            absolute_positioning = False
+
+        z_match = Z_PARAM_PATTERN.search(command)
+        if z_match and token in ("G0", "G1", "G2", "G3", "G92"):
+            z_value = float(z_match.group(2))
+
+            if token == "G92":
+                safe_z = max(min_z, z_value)
+                if safe_z != z_value:
+                    command = _replace_z_in_command(command, safe_z)
+                    changes += 1
+                current_z = safe_z
+
+            elif absolute_positioning:
+                safe_target = max(min_z, z_value)
+                if safe_target != z_value:
+                    command = _replace_z_in_command(command, safe_target)
+                    changes += 1
+                current_z = safe_target
+
+            else:
+                target_z = current_z + z_value
+                if target_z < min_z:
+                    safe_delta = min_z - current_z
+                    command = _replace_z_in_command(command, safe_delta)
+                    current_z = min_z
+                    changes += 1
+                else:
+                    current_z = target_z
+
+        out.append(command + comment + newline)
+
+    if changes > 0:
+        with open(gcode_file, "w", encoding="utf-8") as f:
+            f.writelines(out)
+
+    return changes
+
+
+def count_negative_z_commands(gcode_file, min_z=MIN_BUILDPLATE_Z):
+    """Return count of commands that still request Z below the build plate."""
+    with open(gcode_file, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    absolute_positioning = True
+    current_z = float(min_z)
+    negatives = 0
+
+    for raw_line in lines:
+        command = raw_line.split(";", 1)[0].strip()
+        if not command:
+            continue
+
+        token = command.split()[0].upper()
+        if token == "G90":
+            absolute_positioning = True
+        elif token == "G91":
+            absolute_positioning = False
+
+        z_match = Z_PARAM_PATTERN.search(command)
+        if not z_match or token not in ("G0", "G1", "G2", "G3", "G92"):
+            continue
+
+        z_value = float(z_match.group(2))
+        if token == "G92":
+            if z_value < min_z:
+                negatives += 1
+            current_z = max(min_z, z_value)
+            continue
+
+        if absolute_positioning:
+            if z_value < min_z:
+                negatives += 1
+            current_z = max(min_z, z_value)
+        else:
+            target_z = current_z + z_value
+            if target_z < min_z:
+                negatives += 1
+            current_z = max(min_z, target_z)
+
+    return negatives
+
 def validate_gcode(file_path):
     """Quick validation of G-code file integrity."""
     try:
@@ -922,6 +1055,30 @@ if __name__ == "__main__":
             logging.info("[PIPELINE] Stage 3 Failed - Continuing with previous stages")
             update_sidecar_stage3_status(gcode_file, "FAILED")
             stage_status["stage_3"] = "FAILED"
+
+        # === SAFETY ENFORCEMENT: NEVER MOVE BELOW BUILD PLATE ===
+        clamped = enforce_non_negative_z_in_gcode(gcode_file, MIN_BUILDPLATE_Z)
+        if clamped > 0:
+            logging.warning(
+                "[SAFETY] Clamped %d negative-Z command(s) to Z>=%.3fmm",
+                clamped,
+                MIN_BUILDPLATE_Z,
+            )
+        else:
+            logging.info("[SAFETY] No negative-Z commands detected")
+
+        remaining_negative = count_negative_z_commands(gcode_file, MIN_BUILDPLATE_Z)
+        if remaining_negative > 0:
+            raise RuntimeError(
+                f"Safety validation failed: {remaining_negative} negative-Z command(s) remain"
+            )
+
+        if load_sidecar_metadata(gcode_file) is not None:
+            update_sidecar_stage3_status(
+                gcode_file,
+                stage_status["stage_3"],
+                include_output_hash=True,
+            )
         
         # === POST-PROCESSING ANALYSIS ===
         logging.info("[PIPELINE] Generating post-processing statistics...")
@@ -951,6 +1108,11 @@ if __name__ == "__main__":
         total_time = time.time() - start_time
         logging.info("[PIPELINE] Summary: Stage 1=%s | Stage 2=%s | Stage 3=%s",
                  stage_status["stage_1"], stage_status["stage_2"], stage_status["stage_3"])
+        logging.info(
+            "[SAFETY] Enforced smoothing cap %.1fdeg and build-plate floor Z>=%.3fmm",
+            ZAA_MAX_SMOOTHING_ANGLE,
+            MIN_BUILDPLATE_Z,
+        )
         logging.info("[PIPELINE] ════════════════════════════════════════")
         logging.info("[PIPELINE] All-In-One Post-Processing Complete ✓")
         logging.info(f"[SYSTEM] Output: {os.path.basename(gcode_file)}")

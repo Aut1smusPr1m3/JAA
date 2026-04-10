@@ -1,6 +1,7 @@
 from gcodezaa.context import ProcessorContext
 from gcodezaa.extrusion import Extrusion, decompose_arc
 from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
+from gcodezaa.config import MIN_BUILDPLATE_Z
 import os
 import re
 import math
@@ -126,6 +127,13 @@ def _segment_length(p1: tuple[float, float, float], p2: tuple[float, float, floa
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+def clamp_buildplate_z(z_value: float | None, min_z: float = MIN_BUILDPLATE_Z) -> float | None:
+    """Clamp absolute Z values to the build-plate plane for print safety."""
+    if z_value is None:
+        return None
+    return max(min_z, z_value)
+
+
 def _build_surface_extrusions(
     ctx: ProcessorContext,
     points: list[dict],
@@ -142,9 +150,11 @@ def _build_surface_extrusions(
 
     total_length = 0.0
     for idx in range(1, len(points)):
+        start_z = clamp_buildplate_z(points[idx - 1]["adjusted_z"])
+        end_z = clamp_buildplate_z(points[idx]["adjusted_z"])
         total_length += _segment_length(
-            (points[idx - 1]["x"], points[idx - 1]["y"], points[idx - 1]["adjusted_z"]),
-            (points[idx]["x"], points[idx]["y"], points[idx]["adjusted_z"]),
+            (points[idx - 1]["x"], points[idx - 1]["y"], start_z),
+            (points[idx]["x"], points[idx]["y"], end_z),
         )
 
     if total_length <= 0:
@@ -163,8 +173,16 @@ def _build_surface_extrusions(
     previous_pos = ctx.last_p
 
     for idx in range(1, len(points)):
-        start = (points[idx - 1]["x"], points[idx - 1]["y"], points[idx - 1]["adjusted_z"])
-        end = (points[idx]["x"], points[idx]["y"], points[idx]["adjusted_z"])
+        start = (
+            points[idx - 1]["x"],
+            points[idx - 1]["y"],
+            clamp_buildplate_z(points[idx - 1]["adjusted_z"]),
+        )
+        end = (
+            points[idx]["x"],
+            points[idx]["y"],
+            clamp_buildplate_z(points[idx]["adjusted_z"]),
+        )
         length = _segment_length(start, end)
         if length <= 1e-6:
             continue
@@ -285,7 +303,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         # Get target position
         target_x = float(args["X"]) if "X" in args else None
         target_y = float(args["Y"]) if "Y" in args else None
-        target_z = float(args["Z"]) if "Z" in args else None
+        target_z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
         target_e = float(args["E"]) if "E" in args else None
         target_f = float(args["F"]) if "F" in args else None
         
@@ -316,7 +334,9 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                     ctx.record_z_offset(analysis.get("z_offset", 0), analysis.get("confidence", 0))
 
                 if ctx.extrusion:
-                    adjusted_z = segment_analysis[-1].get("adjusted_z", target_z)
+                    adjusted_z = clamp_buildplate_z(
+                        segment_analysis[-1].get("adjusted_z", target_z)
+                    )
         
         if not ctx.extrusion:
             ctx.extrusion.append(
@@ -339,7 +359,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         # Get arc end position
         end_x = float(args["X"]) if "X" in args else None
         end_y = float(args["Y"]) if "Y" in args else None
-        end_z = float(args["Z"]) if "Z" in args else None
+        end_z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
         
         # Get arc center offset or radius
         center_i = float(args["I"]) if "I" in args else None
@@ -379,7 +399,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                 arc_points.append({
                     "x": waypoint[0],
                     "y": waypoint[1],
-                    "adjusted_z": waypoint[2] + analysis.get("z_offset", 0),
+                    "adjusted_z": clamp_buildplate_z(waypoint[2] + analysis.get("z_offset", 0)),
                     "z_offset": analysis.get("z_offset", 0),
                     "normal": analysis.get("normal", (0,0,1)),
                     "confidence": analysis.get("confidence", 0),
@@ -417,7 +437,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         ctx.layer += 1
         ctx.line_type = ctx.syntax.line_type_inner_wall
     elif ctx.line.startswith(ctx.syntax.z):
-        ctx.z = float(ctx.line.removeprefix(ctx.syntax.z))
+        ctx.z = clamp_buildplate_z(float(ctx.line.removeprefix(ctx.syntax.z)))
     elif ctx.line.startswith(ctx.syntax.height):
         ctx.height = float(ctx.line.removeprefix(ctx.syntax.height))
     elif ctx.line.startswith(ctx.syntax.width):
@@ -442,7 +462,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
             ctx.last_p = (
                 float(args.get("X", ctx.last_p[0])),
                 float(args.get("Y", ctx.last_p[1])),
-                float(args.get("Z", ctx.last_p[2])),
+                clamp_buildplate_z(float(args.get("Z", ctx.last_p[2]))),
             )
     elif ctx.line.startswith("EXCLUDE_OBJECT_DEFINE"):
         args = parse_klipper_args(ctx.line.removeprefix("EXCLUDE_OBJECT_DEFINE "))
@@ -518,7 +538,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                 p=ctx.last_p,
                 x=None,
                 y=None,
-                z=ctx.z,
+                z=clamp_buildplate_z(ctx.z),
                 e=None,
                 f=None,
                 relative=False,
