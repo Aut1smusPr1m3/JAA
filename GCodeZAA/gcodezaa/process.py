@@ -519,7 +519,7 @@ def _build_surface_extrusions(
                 z=end[2],
                 e=segment_e,
                 f=feedrate if idx == 1 else None,
-                relative=ctx.relative_extrusion,
+                relative=ctx.relative_positioning,
             )
         )
         previous_pos = end
@@ -660,7 +660,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                     z=adjusted_z,
                     e=target_e,
                     f=target_f,
-                    relative=ctx.relative_extrusion,
+                    relative=ctx.relative_positioning,
                 )
             )
         
@@ -745,7 +745,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
                         z=end_z,
                         e=e,
                         f=f,
-                        relative=ctx.relative_extrusion,
+                        relative=ctx.relative_positioning,
                     )
                 )
     
