@@ -26,3 +26,24 @@
 ## Operational toggles
 - `ENABLE_ARC_ANALYSIS`
 - `GCODEZAA_AVAILABLE` (runtime import detection)
+
+## Stage 2 runtime environment controls
+- `GCODEZAA_RAYCAST_DEVICE`
+	- Default: `auto`
+	- Values: `auto`, `sycl:0`, `cpu:0` (and `cuda` alias mapped to `sycl:0`)
+- `GCODEZAA_REQUIRE_GPU`
+	- Default: `0`
+	- If `1`, Stage 2 raises when requested GPU path is unavailable.
+- `GCODEZAA_SAMPLE_DISTANCE_MM`
+	- Default: `0.2`
+- `GCODEZAA_MAX_SEGMENT_SAMPLES`
+	- Default: `384`
+- `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM`
+	- Default: `1000`
+	- Runtime clamp: `10..5000` mm (out-of-range values are clamped with warning logs)
+- `GCODEZAA_BATCH_RAY_SIZE`
+	- Default: `4096`
+
+## Runtime observability
+- Stage 2 emits one environment snapshot log at startup (`[GCodeZAA] Stage 2 runtime env: ...`).
+- Raycast device resolver emits resolved selection info (for example `AUTO -> SYCL:0` or `AUTO -> CPU:0`).

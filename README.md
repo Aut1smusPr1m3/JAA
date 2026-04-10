@@ -75,6 +75,11 @@ python Ultra_Optimizer.py input.gcode
 Profiling output defaults to `ultra_optimizer_profile.prof` in repo root and can be opened with tools like `snakeviz`.
 For GPU acceleration, use an Open3D build/runtime with SYCL support and available SYCL GPU devices.
 
+Runtime notes:
+- Stage 2 logs an env snapshot (`[GCodeZAA] Stage 2 runtime env: ...`) for diagnostics.
+- Raycast resolver logs selected device (`AUTO -> SYCL:0` or `AUTO -> CPU:0`).
+- `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` is safety-clamped to `10..5000` mm to avoid masking state-jump defects.
+
 ## Notes
 - Open3D is optional for advanced Stage 2 raycasting workflows.
 - ArcWelder integration requires ArcWelder.exe in repository root.

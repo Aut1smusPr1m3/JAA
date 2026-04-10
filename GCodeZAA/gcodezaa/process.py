@@ -188,11 +188,18 @@ def _prime_context_state_for_line(ctx: ProcessorContext, line: str) -> None:
         y = float(args["Y"]) if "Y" in args else None
         z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
         if x is not None or y is not None or z is not None:
-            ctx.last_p = (
-                x if x is not None else ctx.last_p[0],
-                y if y is not None else ctx.last_p[1],
-                z if z is not None else ctx.last_p[2],
-            )
+            if ctx.relative_positioning:
+                ctx.last_p = (
+                    ctx.last_p[0] + (x or 0.0),
+                    ctx.last_p[1] + (y or 0.0),
+                    clamp_buildplate_z(ctx.last_p[2] + (z or 0.0)),
+                )
+            else:
+                ctx.last_p = (
+                    x if x is not None else ctx.last_p[0],
+                    y if y is not None else ctx.last_p[1],
+                    z if z is not None else ctx.last_p[2],
+                )
 
         if "E" in args:
             e_val = float(args["E"])
