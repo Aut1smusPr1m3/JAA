@@ -37,6 +37,16 @@ ULTRA_OPTIMIZER_PROFILE=1 python Ultra_Optimizer.py input.gcode
 ```
 This writes `ultra_optimizer_profile.prof` for analysis (e.g. with `snakeviz`).
 
+Repeatable benchy throughput run:
+```bash
+./scripts/perf/profile_benchy.sh
+```
+This creates timestamped artifacts under `perf_runs/benchy/` including:
+- processed G-code copy
+- profiler output (`.prof`)
+- optimizer log
+- safety and timing summary
+
 ## ArcWelder skipped
 Reason:
 - `ArcWelder.exe` missing from repository root.

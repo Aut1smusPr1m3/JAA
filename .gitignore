@@ -10,6 +10,11 @@ __pycache__/
 # Logs and temporary files
 *.log
 *.backup
+*.prof
+
+# Local large test inputs / profiling outputs
+Gcode just for testing/
+perf_runs/
 
 # VS Code settings
 .vscode/
