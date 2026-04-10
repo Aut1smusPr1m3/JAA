@@ -118,7 +118,57 @@ def test_analyze_segment_batch_skips_implausible_segments():
     assert analysis == []
 
 
+def test_analyze_segment_batch_logs_capped_path(caplog):
+    caplog.set_level("DEBUG")
+    analyzer = SurfaceAnalyzer(None)
+
+    analysis = analyzer.analyze_segment_batch(
+        x1=0.0,
+        y1=0.0,
+        z=0.2,
+        x2=200.0,
+        y2=0.0,
+        layer_height=0.2,
+        sample_distance=0.01,
+    )
+
+    assert analysis
+    assert "Segment sampling capped" in caplog.text
+    assert "Skipping surface-following for implausible segment" not in caplog.text
+
+
+def test_analyze_segment_batch_logs_implausible_skip_path(caplog):
+    caplog.set_level("DEBUG")
+    analyzer = SurfaceAnalyzer(None)
+
+    analysis = analyzer.analyze_segment_batch(
+        x1=0.0,
+        y1=0.0,
+        z=0.2,
+        x2=6000.0,
+        y2=0.0,
+        layer_height=0.2,
+        sample_distance=0.2,
+    )
+
+    assert analysis == []
+    assert "Skipping surface-following for implausible segment" in caplog.text
+    assert "Segment sampling capped" not in caplog.text
+
+
 def test_surface_follow_segment_limit_sanitization_bounds():
     assert surface_analysis._sanitize_surface_follow_segment_limit(1.0) == 10.0
     assert surface_analysis._sanitize_surface_follow_segment_limit(1000.0) == 1000.0
     assert surface_analysis._sanitize_surface_follow_segment_limit(999999.0) == 5000.0
+
+
+def test_surface_follow_segment_limit_sanitization_logs_clamps(caplog):
+    caplog.set_level("WARNING")
+
+    low = surface_analysis._sanitize_surface_follow_segment_limit(1.0)
+    high = surface_analysis._sanitize_surface_follow_segment_limit(999999.0)
+
+    assert low == 10.0
+    assert high == 5000.0
+    assert "is too low; clamping" in caplog.text
+    assert "is too high; clamping" in caplog.text

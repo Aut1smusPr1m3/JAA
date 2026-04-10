@@ -378,6 +378,22 @@ def select_primary_stl_model(model_dir):
         return None
     return stl_files[0]
 
+
+STAGE2_RUNTIME_ENV_KEYS = (
+    "GCODEZAA_RAYCAST_DEVICE",
+    "GCODEZAA_REQUIRE_GPU",
+    "GCODEZAA_SAMPLE_DISTANCE_MM",
+    "GCODEZAA_MAX_SEGMENT_SAMPLES",
+    "GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM",
+)
+
+
+def build_stage2_runtime_env_snapshot():
+    """Render a concise Stage 2 env snapshot for operator diagnostics."""
+    return ", ".join(
+        f"{key}={os.getenv(key, '<default>')}" for key in STAGE2_RUNTIME_ENV_KEYS
+    )
+
 def detect_ironing_sections(gcode_lines):
     """
     Detect ironing sections from slicer feature comments and inline move comments.
@@ -1079,17 +1095,9 @@ if __name__ == "__main__":
         if GCODEZAA_AVAILABLE:
             logging.info("[PIPELINE] Stage 2: GCodeZAA Full Surface Raycasting + Z-Compensation")
             try:
-                stage2_env_keys = [
-                    "GCODEZAA_RAYCAST_DEVICE",
-                    "GCODEZAA_REQUIRE_GPU",
-                    "GCODEZAA_SAMPLE_DISTANCE_MM",
-                    "GCODEZAA_MAX_SEGMENT_SAMPLES",
-                    "GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM",
-                ]
-                stage2_env_snapshot = ", ".join(
-                    f"{key}={os.getenv(key, '<default>')}" for key in stage2_env_keys
+                logging.info(
+                    f"[GCodeZAA] Stage 2 runtime env: {build_stage2_runtime_env_snapshot()}"
                 )
-                logging.info(f"[GCodeZAA] Stage 2 runtime env: {stage2_env_snapshot}")
 
                 model_dir = os.path.join(script_dir, "stl_models")
 
