@@ -1,0 +1,26 @@
+# Python virtual environment
+Optimizer/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs and temporary files
+*.log
+*.backup
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Package metadata
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
