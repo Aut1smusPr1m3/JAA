@@ -1072,10 +1072,10 @@ if __name__ == "__main__":
                     else:
                         plate_object = (selected_model, 0.0, 0.0)
 
+                        stage2_input_sha = _hash_file(gcode_file)
+
                         with open(gcode_file, 'r', encoding='utf-8') as f:
                             gcode_lines = f.readlines()
-
-                        stage2_input_sha = _hash_text_lines(gcode_lines)
                         invalidate_stale_sidecar(gcode_file, stage2_input_sha)
 
                         logging.info(
@@ -1083,16 +1083,17 @@ if __name__ == "__main__":
                         )
                         enhanced_gcode = gcodezaa_process(gcode_lines, model_dir, plate_object)
 
-                        stage2_output_sha = _hash_text_lines(enhanced_gcode)
+                        with open(gcode_file, 'w', encoding='utf-8') as f:
+                            f.writelines(enhanced_gcode)
+
+                        # Hash the written file bytes to avoid cross-platform newline normalization mismatches.
+                        stage2_output_sha = _hash_file(gcode_file)
                         stage2_metadata = build_stage2_metadata(
                             enhanced_gcode,
                             selected_model,
                             stage2_input_sha,
                             stage2_output_sha,
                         )
-
-                        with open(gcode_file, 'w', encoding='utf-8') as f:
-                            f.writelines(enhanced_gcode)
 
                         sidecar_path = write_sidecar_metadata(gcode_file, stage2_metadata)
                         sidecar_valid, sidecar_msg = validate_sidecar_metadata(gcode_file, stage2_metadata)

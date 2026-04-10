@@ -5,6 +5,7 @@ from pathlib import Path
 
 from Ultra_Optimizer import (
     _hash_file,
+    _hash_text_lines,
     build_stage2_metadata,
     enforce_stage1_success_or_raise,
     invalidate_stale_sidecar,
@@ -255,5 +256,30 @@ def test_validate_sidecar_metadata_accepts_final_stage3_hash(tmp_path: Path):
         metadata,
         check_stage2_file_hash=False,
     )
+    assert valid is True
+    assert msg == "ok"
+
+
+def test_validate_sidecar_metadata_with_crlf_file_uses_on_disk_hash(tmp_path: Path):
+    gcode_file = tmp_path / "sidecar_crlf.gcode"
+
+    normalized_lines = [
+        "G1 X1 Y1 E0.1\n",
+        "G1 X2 Y2 E0.2\n",
+    ]
+    with open(gcode_file, "w", encoding="utf-8", newline="\r\n") as f:
+        f.writelines(normalized_lines)
+
+    # Text-line hashing can differ from file-byte hashing on CRLF files.
+    assert _hash_text_lines(normalized_lines) != _hash_file(str(gcode_file))
+
+    metadata = build_stage2_metadata(
+        normalized_lines,
+        selected_model="Model.stl",
+        stage2_input_sha256="input_sha",
+        stage2_output_sha256=_hash_file(str(gcode_file)),
+    )
+
+    valid, msg = validate_sidecar_metadata(str(gcode_file), metadata)
     assert valid is True
     assert msg == "ok"
