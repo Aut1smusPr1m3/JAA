@@ -14,6 +14,100 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_device_spec(spec: str) -> str:
+    value = (spec or "").strip().upper()
+    if value in {"", "AUTO"}:
+        return "AUTO"
+    if value in {"CPU", "CPU:0"}:
+        return "CPU:0"
+    if value in {"SYCL", "SYCL:0"}:
+        return "SYCL:0"
+    if value.startswith("CPU:") or value.startswith("SYCL:"):
+        return value
+    if value in {"CUDA", "CUDA:0"}:
+        # Open3D raycasting acceleration is exposed via SYCL backends.
+        return "SYCL:0"
+    return value
+
+
+def _sycl_devices() -> list[str]:
+    if open3d is None:
+        return []
+    if not hasattr(open3d.core, "sycl"):
+        return []
+    try:
+        devices = open3d.core.sycl.get_available_devices()
+        return [str(d) for d in devices]
+    except Exception:
+        return []
+
+
+def _sycl_gpu_available() -> bool:
+    devices = _sycl_devices()
+    if not devices:
+        return False
+    return any("gpu" in d.lower() for d in devices)
+
+
+def resolve_raycast_device_spec() -> str:
+    """Resolve raycasting device target from environment with safe fallback behavior."""
+    requested = _normalize_device_spec(os.getenv("GCODEZAA_RAYCAST_DEVICE", "AUTO"))
+    require_gpu = os.getenv("GCODEZAA_REQUIRE_GPU", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    if open3d is None:
+        if require_gpu:
+            raise RuntimeError("GCODEZAA_REQUIRE_GPU is set but open3d is not available")
+        return "CPU:0"
+
+    if requested == "AUTO":
+        if _sycl_gpu_available():
+            return "SYCL:0"
+        if require_gpu:
+            raise RuntimeError("GCODEZAA_REQUIRE_GPU is set but no SYCL GPU was detected")
+        return "CPU:0"
+
+    if requested.startswith("SYCL"):
+        if _sycl_gpu_available():
+            return requested
+        if require_gpu:
+            raise RuntimeError(
+                f"GCODEZAA_REQUIRE_GPU is set but requested device {requested} is not available"
+            )
+        logger.warning(
+            "[GCodeZAA] Requested raycast device %s but no SYCL GPU detected; falling back to CPU:0",
+            requested,
+        )
+        return "CPU:0"
+
+    if requested.startswith("CPU"):
+        return requested
+
+    logger.warning(
+        "[GCodeZAA] Unknown GCODEZAA_RAYCAST_DEVICE=%s; falling back to CPU:0",
+        requested,
+    )
+    return "CPU:0"
+
+
+def make_raycast_device():
+    """Create and return an Open3D Device for raycasting scene execution."""
+    spec = resolve_raycast_device_spec()
+    try:
+        return open3d.core.Device(spec), spec
+    except Exception as exc:
+        logger.warning(
+            "[GCodeZAA] Failed to create raycast device %s (%s); using CPU:0",
+            spec,
+            exc,
+        )
+        return open3d.core.Device("CPU:0"), "CPU:0"
+
 # === ENHANCED ZAA CONFIGURATION ===
 ZAA_ADAPTIVE_RESOLUTION = True          # Adapt resolution to geometry
 ZAA_MAX_Z_DEVIATION = 0.5              # Max Z deviation from nominal layer
@@ -269,12 +363,14 @@ def process_gcode(
 ) -> list[str]:
     ctx = ProcessorContext(gcode, model_dir)
     if plate_object is not None:
-        ctx.active_object = load_object(
+        scene, device = load_object(
             ctx, plate_object[0], plate_object[1], plate_object[2]
         )
+        ctx.active_object = scene
+        ctx.active_object_device = device
     
     # Initialize surface analysis with batching support
-    surface_analyzer = SurfaceAnalyzer(ctx.active_object)
+    surface_analyzer = SurfaceAnalyzer(ctx.active_object, ctx.active_object_device)
     edge_detector = EdgeDetector()
     
     has_executable_markers = any(
@@ -300,14 +396,16 @@ def process_gcode(
 
 def load_object(
     ctx: ProcessorContext, name: str, x: float, y: float
-) -> object:
+) -> tuple[object, object]:
     """Load STL model and create raycasting scene with position offset."""
     if open3d is None:
         raise RuntimeError("open3d is required to load STL models for raycasting")
 
+    device, device_spec = make_raycast_device()
+
     model_path = os.path.join(ctx.model_dir, name)
     
-    logger.info(f"[GCodeZAA] Loading STL model: {name}")
+    logger.info(f"[GCodeZAA] Loading STL model: {name} on device {device_spec}")
     mesh = open3d.t.io.read_triangle_mesh(model_path, enable_post_processing=True)
     
     min_bound = mesh.get_min_bound()
@@ -322,10 +420,11 @@ def load_object(
     z_span = float((max_bound[2] - min_bound[2]).item())
     logger.info(f"[GCodeZAA] Model bounds: X={x_span:.1f}mm, Y={y_span:.1f}mm, Z={z_span:.1f}mm")
 
-    scene = open3d.t.geometry.RaycastingScene()
+    mesh = mesh.to(device)
+    scene = open3d.t.geometry.RaycastingScene(device=device)
     scene.add_triangles(mesh)
 
-    return scene
+    return scene, device
 
 
 def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_detector: EdgeDetector):
@@ -515,14 +614,18 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
         name = args["NAME"]
         x, y = map(float, args["CENTER"].split(","))
 
-        ctx.exclude_object[name] = load_object(
+        scene, device = load_object(
             ctx, re.sub(r"\.stl_.*$", ".stl", name), x, y
         )
+        ctx.exclude_object[name] = scene
+        ctx.exclude_object_device[name] = device
     elif ctx.line.startswith("EXCLUDE_OBJECT_START"):
         args = parse_klipper_args(ctx.line.removeprefix("EXCLUDE_OBJECT_START "))
         ctx.active_object = ctx.exclude_object[args["NAME"]]
+        ctx.active_object_device = ctx.exclude_object_device.get(args["NAME"])
     elif ctx.line.startswith("EXCLUDE_OBJECT_END"):
         ctx.active_object = None
+        ctx.active_object_device = None
 
     if (
         len(ctx.extrusion) == 1

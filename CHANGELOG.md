@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.1-alpha.4 - GPU acceleration groundwork (SYCL device routing)
+
+### Added
+- Stage 2 raycast device selection controls:
+  - `GCODEZAA_RAYCAST_DEVICE=auto|cpu:0|sycl:0`
+  - `GCODEZAA_REQUIRE_GPU=1` to fail fast when GPU is required but unavailable
+- Device-selection tests:
+  - `test_gcodezaa_device_selection.py`
+
+### Changed
+- STL loading and raycasting scene creation now route through resolved Open3D device target.
+- Surface analyzer now builds ray tensors on the selected device.
+- EXCLUDE_OBJECT stage flow now tracks object-associated raycast devices.
+
+### Validation
+- `python -m pytest -q`
+- Result: `55 passed, 3 skipped`
+- Repeatable benchy runs with device modes:
+  - `GCODEZAA_RAYCAST_DEVICE=auto`
+  - `GCODEZAA_RAYCAST_DEVICE=sycl:0`
+  - both completed safely with `negative_z_commands=0`
+
 ## v0.2.1-alpha.2 - High-throughput Stage 2 raycasting
 
 ### Added

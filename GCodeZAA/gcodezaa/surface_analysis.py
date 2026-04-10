@@ -58,8 +58,9 @@ BATCH_RAY_SIZE = max(256, _env_int("GCODEZAA_BATCH_RAY_SIZE", 4096))  # Number o
 class SurfaceAnalyzer:
     """Analyzes surfaces using STL raycasting with tensor batching for performance."""
     
-    def __init__(self, raycasting_scene: Optional[object] = None):
+    def __init__(self, raycasting_scene: Optional[object] = None, device: Optional[object] = None):
         self.scene = raycasting_scene
+        self.device = device
         self.normal_history = []
         self.last_surface_z = 0.0
         self.last_normal = (0.0, 0.0, 1.0)
@@ -116,7 +117,17 @@ class SurfaceAnalyzer:
             
             # Execute batch raycasts
             try:
-                rays_tensor = open3d.core.Tensor(rays, dtype=open3d.core.Dtype.Float32)
+                if self.device is not None:
+                    rays_tensor = open3d.core.Tensor(
+                        rays,
+                        dtype=open3d.core.Dtype.Float32,
+                        device=self.device,
+                    )
+                else:
+                    rays_tensor = open3d.core.Tensor(
+                        rays,
+                        dtype=open3d.core.Dtype.Float32,
+                    )
                 cast_result = self.scene.cast_rays(rays_tensor)
 
                 t_hit = cast_result["t_hit"].numpy()

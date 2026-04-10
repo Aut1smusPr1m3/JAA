@@ -37,6 +37,19 @@ ULTRA_OPTIMIZER_PROFILE=1 python Ultra_Optimizer.py input.gcode
 ```
 This writes `ultra_optimizer_profile.prof` for analysis (e.g. with `snakeviz`).
 
+## GPU acceleration setup (SYCL)
+Stage 2 raycasting device selection:
+1. `GCODEZAA_RAYCAST_DEVICE=auto` (default): use SYCL GPU if available, else CPU.
+2. `GCODEZAA_RAYCAST_DEVICE=sycl:0`: request SYCL path explicitly.
+3. `GCODEZAA_RAYCAST_DEVICE=cpu:0`: force CPU for comparison/debug.
+
+If you want a hard failure when no GPU is available:
+```bash
+GCODEZAA_REQUIRE_GPU=1 python Ultra_Optimizer.py input.gcode
+```
+
+If logs say SYCL GPU unavailable, ensure your Open3D runtime and system drivers expose SYCL devices.
+
 Repeatable benchy throughput run:
 ```bash
 ./scripts/perf/profile_benchy.sh

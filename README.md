@@ -48,12 +48,19 @@ export GCODEZAA_MAX_SEGMENT_SAMPLES=128
 # Batch size for ray submissions (default 4096)
 export GCODEZAA_BATCH_RAY_SIZE=8192
 
+# Device selection: auto|cpu:0|sycl:0 (CUDA maps to SYCL when available)
+export GCODEZAA_RAYCAST_DEVICE=auto
+
+# Optional strict mode: fail if GPU is required but unavailable
+export GCODEZAA_REQUIRE_GPU=0
+
 # Optional pipeline profiling
 export ULTRA_OPTIMIZER_PROFILE=1
 python Ultra_Optimizer.py input.gcode
 ```
 
 Profiling output defaults to `ultra_optimizer_profile.prof` in repo root and can be opened with tools like `snakeviz`.
+For GPU acceleration, use an Open3D build/runtime with SYCL support and available SYCL GPU devices.
 
 ## Notes
 - Open3D is optional for advanced Stage 2 raycasting workflows.

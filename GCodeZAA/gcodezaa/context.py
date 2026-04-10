@@ -27,7 +27,9 @@ class ProcessorContext:
     last_contoured_z: float | None = None
 
     exclude_object: dict[str, object] = {}
+    exclude_object_device: dict[str, object] = {}
     active_object: object | None = None
+    active_object_device: object | None = None
 
     extrusion: list[Extrusion] = []
 
@@ -61,6 +63,7 @@ class ProcessorContext:
         self.normal_history = []
         self.z_offset_history = []
         self.exclude_object = {}
+        self.exclude_object_device = {}
 
         is_in_config = False
         for l in gcode:
