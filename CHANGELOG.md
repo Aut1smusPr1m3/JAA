@@ -8,6 +8,21 @@
   - enable verbose G-code in OrcaSlicer,
   - disable OrcaSlicer Arc fitting,
   - verify and tune `MAX_SMOOTHING_ANGLE` for printer-specific clearance.
+- Stage 2 diagnostics hardening and continuity updates:
+  - added Stage 2 runtime env snapshot helper/logging,
+  - added explicit raycast device resolution info logging,
+  - clamped `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` to a safe runtime range (`10..5000`),
+  - fixed pre-window `G2/G3` context priming to respect `G90/G91` mode.
+  - added contextual implausible-segment diagnostics with process line/cmd metadata to speed up state-jump root-cause analysis.
+
+### Added
+- Regression and evidence tests for incident-class diagnostics:
+  - skip-vs-cap log path coverage for segment analysis,
+  - clamp-warning coverage for segment-limit sanitization,
+  - Stage 2 env snapshot rendering coverage,
+  - G92 and arc priming continuity coverage.
+- Development helper for release readiness evidence capture:
+  - `scripts/perf/capture_stage2_evidence.sh`
 
 ### Validation
 - `python -m pytest -q`

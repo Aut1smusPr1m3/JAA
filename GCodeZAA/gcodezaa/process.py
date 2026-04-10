@@ -1,6 +1,6 @@
 from gcodezaa.context import ProcessorContext
 from gcodezaa.extrusion import Extrusion, decompose_arc
-from gcodezaa.surface_analysis import SurfaceAnalyzer, EdgeDetector
+from gcodezaa.surface_analysis import MAX_SURFACE_FOLLOW_SEGMENT_MM, SurfaceAnalyzer
 from gcodezaa.config import MIN_BUILDPLATE_Z
 from gcodezaa.slicer_syntax import SlicerSyntax
 import os
@@ -188,11 +188,18 @@ def _prime_context_state_for_line(ctx: ProcessorContext, line: str) -> None:
         y = float(args["Y"]) if "Y" in args else None
         z = clamp_buildplate_z(float(args["Z"])) if "Z" in args else None
         if x is not None or y is not None or z is not None:
-            ctx.last_p = (
-                x if x is not None else ctx.last_p[0],
-                y if y is not None else ctx.last_p[1],
-                z if z is not None else ctx.last_p[2],
-            )
+            if ctx.relative_positioning:
+                ctx.last_p = (
+                    ctx.last_p[0] + (x or 0.0),
+                    ctx.last_p[1] + (y or 0.0),
+                    clamp_buildplate_z(ctx.last_p[2] + (z or 0.0)),
+                )
+            else:
+                ctx.last_p = (
+                    x if x is not None else ctx.last_p[0],
+                    y if y is not None else ctx.last_p[1],
+                    z if z is not None else ctx.last_p[2],
+                )
 
         if "E" in args:
             e_val = float(args["E"])
@@ -233,6 +240,7 @@ def resolve_raycast_device_spec() -> str:
 
     if requested == "AUTO":
         if _sycl_gpu_available():
+            logger.info("[GCodeZAA] Raycast device resolved: AUTO -> SYCL:0 (SYCL GPU detected)")
             return "SYCL:0"
         if require_gpu:
             msg = (
@@ -241,10 +249,12 @@ def resolve_raycast_device_spec() -> str:
                 else "GCODEZAA_REQUIRE_GPU is set but no SYCL GPU was detected"
             )
             raise RuntimeError(msg)
+        logger.info("[GCodeZAA] Raycast device resolved: AUTO -> CPU:0 (no SYCL GPU detected)")
         return "CPU:0"
 
     if requested.startswith("SYCL"):
         if _sycl_gpu_available():
+            logger.info("[GCodeZAA] Raycast device resolved: %s", requested)
             return requested
         if require_gpu:
             msg = (
@@ -260,6 +270,7 @@ def resolve_raycast_device_spec() -> str:
         return "CPU:0"
 
     if requested.startswith("CPU"):
+        logger.info("[GCodeZAA] Raycast device resolved: %s", requested)
         return requested
 
     logger.warning(
@@ -545,7 +556,6 @@ def process_gcode(
     
     # Initialize surface analysis with batching support
     surface_analyzer = SurfaceAnalyzer(ctx.active_object, ctx.active_object_device)
-    edge_detector = EdgeDetector()
 
     process_start, process_end, reason = detect_processing_window(ctx.gcode, ctx.syntax)
     logger.info(
@@ -560,7 +570,7 @@ def process_gcode(
 
     ctx.gcode_line = process_start
     while ctx.gcode_line <= process_end and ctx.gcode_line < len(ctx.gcode):
-        process_line(ctx, surface_analyzer, edge_detector)
+        process_line(ctx, surface_analyzer)
         ctx.gcode_line += 1
 
     return ctx.gcode
@@ -599,7 +609,7 @@ def load_object(
     return scene, device
 
 
-def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_detector: EdgeDetector):
+def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
     write_back = ""
     ctx.extrusion = []
     ctx.gcode[ctx.gcode_line] = ctx.line.strip() + "\n"
@@ -628,13 +638,36 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, edge_
             and surface_analyzer.scene is not None
             and target_x is not None
             and target_y is not None
-            and (target_x != ctx.last_p[0] or target_y != ctx.last_p[1])):
+            and (target_x != ctx.last_p[0] or target_y != ctx.last_p[1])
+        ):
+            segment_label = f"line={ctx.gcode_line + 1} cmd={ctx.line.split(';', 1)[0].strip()}"
             # Batch analyze the segment
             segment_analysis = surface_analyzer.analyze_segment_batch(
-                ctx.last_p[0], ctx.last_p[1], target_z if target_z is not None else ctx.last_p[2],
-                target_x, target_y,
-                layer_height=ctx.height
+                ctx.last_p[0],
+                ctx.last_p[1],
+                target_z if target_z is not None else ctx.last_p[2],
+                target_x,
+                target_y,
+                layer_height=ctx.height,
+                segment_label=segment_label,
             )
+
+            if not segment_analysis:
+                distance = math.hypot(target_x - ctx.last_p[0], target_y - ctx.last_p[1])
+                if distance > MAX_SURFACE_FOLLOW_SEGMENT_MM:
+                    logger.warning(
+                        "[GCodeZAA] Surface-follow state jump candidate at line %d: start=(%.3f, %.3f, %.3f) target=(%.3f, %.3f, %.3f) distance=%.2fmm relative_positioning=%s relative_extrusion=%s",
+                        ctx.gcode_line + 1,
+                        ctx.last_p[0],
+                        ctx.last_p[1],
+                        ctx.last_p[2],
+                        target_x,
+                        target_y,
+                        target_z if target_z is not None else ctx.last_p[2],
+                        distance,
+                        ctx.relative_positioning,
+                        ctx.relative_extrusion,
+                    )
             
             if segment_analysis:
                 ctx.extrusion = _build_surface_extrusions(

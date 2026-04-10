@@ -5,16 +5,15 @@ import sys
 
 sys.path.insert(0, "GCodeZAA")
 
-from gcodezaa.process import EdgeDetector, SurfaceAnalyzer, process_line
+from gcodezaa.process import SurfaceAnalyzer, process_line
 from gcodezaa.context import ProcessorContext
 
 
 def _process_all_lines(ctx: ProcessorContext):
     analyzer = SurfaceAnalyzer(None)
-    edge_detector = EdgeDetector()
     for idx in range(len(ctx.gcode)):
         ctx.gcode_line = idx
-        process_line(ctx, analyzer, edge_detector)
+        process_line(ctx, analyzer)
 
 
 def test_relative_extrusion_running_total_updates_last_e():

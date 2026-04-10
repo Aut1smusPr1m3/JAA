@@ -6,6 +6,7 @@ from pathlib import Path
 from Ultra_Optimizer import (
     _hash_file,
     _hash_text_lines,
+    build_stage2_runtime_env_snapshot,
     build_stage2_metadata,
     detect_ironing_sections,
     enforce_stage1_success_or_raise,
@@ -43,6 +44,38 @@ def test_select_primary_stl_model_returns_none_without_stl(tmp_path: Path):
     (model_dir / "mesh.obj").write_text("o mesh", encoding="utf-8")
 
     assert select_primary_stl_model(str(model_dir)) is None
+
+
+def test_build_stage2_runtime_env_snapshot_defaults(monkeypatch):
+    monkeypatch.delenv("GCODEZAA_RAYCAST_DEVICE", raising=False)
+    monkeypatch.delenv("GCODEZAA_REQUIRE_GPU", raising=False)
+    monkeypatch.delenv("GCODEZAA_SAMPLE_DISTANCE_MM", raising=False)
+    monkeypatch.delenv("GCODEZAA_MAX_SEGMENT_SAMPLES", raising=False)
+    monkeypatch.delenv("GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM", raising=False)
+
+    snapshot = build_stage2_runtime_env_snapshot()
+
+    assert "GCODEZAA_RAYCAST_DEVICE=<default>" in snapshot
+    assert "GCODEZAA_REQUIRE_GPU=<default>" in snapshot
+    assert "GCODEZAA_SAMPLE_DISTANCE_MM=<default>" in snapshot
+    assert "GCODEZAA_MAX_SEGMENT_SAMPLES=<default>" in snapshot
+    assert "GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=<default>" in snapshot
+
+
+def test_build_stage2_runtime_env_snapshot_overrides(monkeypatch):
+    monkeypatch.setenv("GCODEZAA_RAYCAST_DEVICE", "sycl:0")
+    monkeypatch.setenv("GCODEZAA_REQUIRE_GPU", "1")
+    monkeypatch.setenv("GCODEZAA_SAMPLE_DISTANCE_MM", "0.30")
+    monkeypatch.setenv("GCODEZAA_MAX_SEGMENT_SAMPLES", "256")
+    monkeypatch.setenv("GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM", "1200")
+
+    snapshot = build_stage2_runtime_env_snapshot()
+
+    assert "GCODEZAA_RAYCAST_DEVICE=sycl:0" in snapshot
+    assert "GCODEZAA_REQUIRE_GPU=1" in snapshot
+    assert "GCODEZAA_SAMPLE_DISTANCE_MM=0.30" in snapshot
+    assert "GCODEZAA_MAX_SEGMENT_SAMPLES=256" in snapshot
+    assert "GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=1200" in snapshot
 
 
 def test_sidecar_path_for_gcode_suffix(tmp_path: Path):

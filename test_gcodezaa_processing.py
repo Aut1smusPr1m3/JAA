@@ -7,6 +7,8 @@ sys.path.insert(0, "GCodeZAA")
 
 from gcodezaa.process import process_gcode
 from gcodezaa.process import _detect_line_type_from_line
+from gcodezaa.process import _prime_context_state_for_line
+from gcodezaa.context import ProcessorContext
 from gcodezaa.slicer_syntax import Slicer, SlicerSyntax
 
 
@@ -86,3 +88,46 @@ def test_detect_line_type_from_line_handles_type_marker_for_orca():
     syntax = SlicerSyntax(Slicer.ORCA)
 
     assert _detect_line_type_from_line(";TYPE:Ironing\n", syntax) == "ironing"
+
+
+def test_prime_context_state_g92_persists_into_first_window_move():
+    gcode = [
+        "; EXECUTABLE_BLOCK_START\n",
+        "G1 X101.0 Y200.0 Z0.2 E0.1 F1200\n",
+    ]
+    ctx = ProcessorContext(gcode, ".")
+
+    _prime_context_state_for_line(ctx, "G90\n")
+    _prime_context_state_for_line(ctx, "G92 X100.0 Y200.0 Z0.2 E0\n")
+    _prime_context_state_for_line(ctx, gcode[1])
+
+    assert ctx.relative_positioning is False
+    assert abs(ctx.last_p[0] - 101.0) < 1e-9
+    assert abs(ctx.last_p[1] - 200.0) < 1e-9
+    assert abs(ctx.last_p[2] - 0.2) < 1e-9
+
+
+def test_prime_context_state_relative_arc_accumulates_position():
+    ctx = ProcessorContext(["G2 X5.0 Y-2.0 E0.1\n"], ".")
+    ctx.last_p = (10.0, 10.0, 0.2)
+
+    _prime_context_state_for_line(ctx, "G91\n")
+    _prime_context_state_for_line(ctx, "G2 X5.0 Y-2.0 E0.1\n")
+
+    assert ctx.relative_positioning is True
+    assert abs(ctx.last_p[0] - 15.0) < 1e-9
+    assert abs(ctx.last_p[1] - 8.0) < 1e-9
+    assert abs(ctx.last_p[2] - 0.2) < 1e-9
+
+
+def test_prime_context_state_absolute_arc_sets_position():
+    ctx = ProcessorContext(["G2 X5.0 Y6.0 E0.1\n"], ".")
+    ctx.last_p = (10.0, 10.0, 0.2)
+
+    _prime_context_state_for_line(ctx, "G90\n")
+    _prime_context_state_for_line(ctx, "G2 X5.0 Y6.0 E0.1\n")
+
+    assert ctx.relative_positioning is False
+    assert abs(ctx.last_p[0] - 5.0) < 1e-9
+    assert abs(ctx.last_p[1] - 6.0) < 1e-9
+    assert abs(ctx.last_p[2] - 0.2) < 1e-9

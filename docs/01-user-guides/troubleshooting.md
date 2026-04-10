@@ -59,6 +59,11 @@ Use throughput controls:
 3. Increase batch size for cast submission: `GCODEZAA_BATCH_RAY_SIZE=8192`
 4. Guard unrealistic jumps in surface-following segments: `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=1000`
 
+Notes:
+- `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` is safety-clamped to `10..5000` mm at runtime.
+- Values above `5000` mm are reduced to `5000` mm with a warning to avoid masking state-jump defects.
+- Values below `10` mm are raised to `10` mm to avoid excessive false positives.
+
 Example:
 ```bash
 GCODEZAA_SAMPLE_DISTANCE_MM=0.25 \
@@ -84,6 +89,26 @@ GCODEZAA_REQUIRE_GPU=1 python Ultra_Optimizer.py input.gcode
 ```
 
 If logs say SYCL GPU unavailable, ensure your Open3D runtime and system drivers expose SYCL devices.
+
+Expected diagnostics in logs:
+1. Stage 2 prints runtime env snapshot: `[GCodeZAA] Stage 2 runtime env: ...`.
+2. Device resolver prints selection: `Raycast device resolved: AUTO -> SYCL:0` or `AUTO -> CPU:0`.
+3. Explicit requests print selection/fallback messages (`SYCL:0` or `CPU:0`).
+
+Quick SYCL check:
+```bash
+python -c "import open3d; print(open3d.core.sycl.get_available_devices() if hasattr(open3d.core, 'sycl') else 'SYCL not available')"
+```
+
+## Implausible segment distance logs
+Interpretation:
+1. `Skipping surface-following for implausible segment ...` means guard triggered (segment exceeded configured max).
+2. `Segment sampling capped ...` means segment is considered plausible but sample count hit cap.
+
+If you still see very large capped distances:
+1. Verify you are running latest branch/code.
+2. Check Stage 2 env snapshot for `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` overrides.
+3. Keep `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` near default unless actively debugging.
 
 Repeatable benchy throughput run:
 ```bash
