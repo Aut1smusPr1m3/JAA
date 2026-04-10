@@ -231,25 +231,28 @@ def resolve_raycast_device_spec() -> str:
         "on",
     }
 
-    if open3d is None:
-        if require_gpu:
-            raise RuntimeError("GCODEZAA_REQUIRE_GPU is set but open3d is not available")
-        return "CPU:0"
-
     if requested == "AUTO":
         if _sycl_gpu_available():
             return "SYCL:0"
         if require_gpu:
-            raise RuntimeError("GCODEZAA_REQUIRE_GPU is set but no SYCL GPU was detected")
+            msg = (
+                "GCODEZAA_REQUIRE_GPU is set but open3d is not available"
+                if open3d is None
+                else "GCODEZAA_REQUIRE_GPU is set but no SYCL GPU was detected"
+            )
+            raise RuntimeError(msg)
         return "CPU:0"
 
     if requested.startswith("SYCL"):
         if _sycl_gpu_available():
             return requested
         if require_gpu:
-            raise RuntimeError(
-                f"GCODEZAA_REQUIRE_GPU is set but requested device {requested} is not available"
+            msg = (
+                "GCODEZAA_REQUIRE_GPU is set but open3d is not available"
+                if open3d is None
+                else f"GCODEZAA_REQUIRE_GPU is set but requested device {requested} is not available"
             )
+            raise RuntimeError(msg)
         logger.warning(
             "[GCodeZAA] Requested raycast device %s but no SYCL GPU detected; falling back to CPU:0",
             requested,
