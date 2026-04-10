@@ -1,5 +1,6 @@
 # Python virtual environment
 Optimizer/
+.venv/
 
 # Python bytecode
 __pycache__/
