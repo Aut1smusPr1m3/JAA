@@ -41,12 +41,30 @@ jobs:
           $bundleName = "Ultra_Optimizer-Windows-AIO-$version"
           $staging = Join-Path $env:RUNNER_TEMP $bundleName
           $wheelhouse = Join-Path $staging "wheels"
+          $wheelhouseWindows = Join-Path $env:RUNNER_TEMP "wheelhouse-windows-py312"
+          $wheelhouseLinux = Join-Path $env:RUNNER_TEMP "wheelhouse-linux-py312"
           New-Item -ItemType Directory -Path $staging -Force | Out-Null
           New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+          New-Item -ItemType Directory -Path $wheelhouseWindows -Force | Out-Null
+          New-Item -ItemType Directory -Path $wheelhouseLinux -Force | Out-Null
 
-          python -m pip download --dest $wheelhouse -r requirements.txt
-          python -m pip download --dest $wheelhouse -r requirements-optional.txt
-          python -m pip download --dest $wheelhouse -r requirements-dev.txt
+          python -m pip download --dest $wheelhouseWindows --only-binary=:all: --platform win_amd64 --implementation cp --python-version 312 --abi cp312 -r requirements.txt
+          python -m pip download --dest $wheelhouseWindows --only-binary=:all: --platform win_amd64 --implementation cp --python-version 312 --abi cp312 -r requirements-optional.txt
+          python -m pip download --dest $wheelhouseWindows --only-binary=:all: --platform win_amd64 --implementation cp --python-version 312 --abi cp312 -r requirements-dev.txt
+
+          python -m pip download --dest $wheelhouseLinux --only-binary=:all: --platform manylinux_2_31_x86_64 --platform manylinux2014_x86_64 --implementation cp --python-version 312 --abi cp312 -r requirements.txt
+          python -m pip download --dest $wheelhouseLinux --only-binary=:all: --platform manylinux_2_31_x86_64 --platform manylinux2014_x86_64 --implementation cp --python-version 312 --abi cp312 -r requirements-optional.txt
+          python -m pip download --dest $wheelhouseLinux --only-binary=:all: --platform manylinux_2_31_x86_64 --platform manylinux2014_x86_64 --implementation cp --python-version 312 --abi cp312 -r requirements-dev.txt
+
+          Get-ChildItem -Path $wheelhouseWindows -Filter *.whl | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -Path (Join-Path $wheelhouseWindows "SHA256SUMS.txt")
+
+          Get-ChildItem -Path $wheelhouseLinux -Filter *.whl | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -Path (Join-Path $wheelhouseLinux "SHA256SUMS.txt")
+
+          Copy-Item -Path (Join-Path $wheelhouseWindows "*") -Destination $wheelhouse -Force
 
           Copy-Item Ultra_Optimizer.py $staging
           Copy-Item ArcWelder.exe $staging -ErrorAction SilentlyContinue
@@ -72,8 +90,22 @@ jobs:
 
           Compress-Archive -Path "$staging\*" -DestinationPath $zipPath
 
+          $windowsWheelZipPath = Join-Path $env:RUNNER_TEMP "Ultra_Optimizer-Wheelhouse-windows-py312-$version.zip"
+          if (Test-Path $windowsWheelZipPath) {
+            Remove-Item $windowsWheelZipPath -Force
+          }
+          Compress-Archive -Path "$wheelhouseWindows\*" -DestinationPath $windowsWheelZipPath
+
+          $linuxWheelZipPath = Join-Path $env:RUNNER_TEMP "Ultra_Optimizer-Wheelhouse-linux-py312-$version.zip"
+          if (Test-Path $linuxWheelZipPath) {
+            Remove-Item $linuxWheelZipPath -Force
+          }
+          Compress-Archive -Path "$wheelhouseLinux\*" -DestinationPath $linuxWheelZipPath
+
           "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "bundle_name=$bundleName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "windows_wheel_zip_path=$windowsWheelZipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "linux_wheel_zip_path=$linuxWheelZipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload AIO artifact
         uses: actions/upload-artifact@v4
@@ -81,9 +113,24 @@ jobs:
           name: ${{ steps.bundle.outputs.bundle_name }}
           path: ${{ steps.bundle.outputs.zip_path }}
 
+      - name: Upload Windows wheelhouse artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-wheelhouse-py312
+          path: ${{ steps.bundle.outputs.windows_wheel_zip_path }}
+
+      - name: Upload Linux wheelhouse artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-wheelhouse-py312
+          path: ${{ steps.bundle.outputs.linux_wheel_zip_path }}
+
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.bundle.outputs.zip_path }}
+          files: |
+            ${{ steps.bundle.outputs.zip_path }}
+            ${{ steps.bundle.outputs.windows_wheel_zip_path }}
+            ${{ steps.bundle.outputs.linux_wheel_zip_path }}
           generate_release_notes: true

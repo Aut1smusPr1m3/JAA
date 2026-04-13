@@ -8,8 +8,11 @@ This repository includes automated Windows AIO release packaging via:
 2. Installs dev + optional dependencies.
 3. Runs full test suite.
 4. Builds a Windows AIO zip bundle.
-5. Uploads the bundle as a workflow artifact.
-6. Publishes a GitHub Release asset when the run is tag-triggered.
+5. Builds standalone wheelhouse zip assets:
+	- Windows CPython 3.12 wheelhouse,
+	- Linux CPython 3.12 wheelhouse.
+6. Uploads all zip files as workflow artifacts.
+7. Publishes all zip files as GitHub Release assets when the run is tag-triggered.
 
 ## Tag-based release flow
 ```bash
@@ -33,6 +36,12 @@ If you create the GitHub release manually, mark it as a prerelease.
 - `GCodeZAA/`
 - `scripts/windows/`
 - `INSTALL_WINDOWS_AIO.bat`
+
+## Additional release assets
+- `Ultra_Optimizer-Wheelhouse-windows-py312-<version>.zip`
+- `Ultra_Optimizer-Wheelhouse-linux-py312-<version>.zip`
+
+Each wheelhouse zip includes `SHA256SUMS.txt` for integrity verification.
 
 ## Local preflight before tagging
 ```bash
