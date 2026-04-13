@@ -26,17 +26,29 @@ Execution conditions:
 - at least one `.stl` present.
 
 Current handoff:
-- `Ultra_Optimizer.py` now selects a primary STL and passes `plate_object=(name,0.0,0.0)`.
+- `Ultra_Optimizer.py` selects a primary STL and resolves transform data before handoff.
+- Position/rotation resolution order:
+	1. explicit comment hints (`; ZAA_OBJECT_POSITION: x,y`, `; ZAA_OBJECT_ROTATION_DEG: r`),
+	2. `EXCLUDE_OBJECT_DEFINE` metadata (`CENTER`, optional rotation fields),
+	3. inferred printable-window XY bounds center,
+	4. final fallback to origin with `0deg` rotation.
+- Stage 2 receives `plate_object=(name, center_x, center_y, rotation_deg)`.
+- For unresolved rotation or center inference fallback, runtime warnings are logged to aid diagnosis.
 
 Responsibilities:
 - printable window processing with machine start/end passthrough,
 - surface analysis and Z adjustments,
-- non-planar ironing logic.
+- non-planar ironing logic,
+- optional STL Z-axis rotation before translation when transform metadata includes rotation.
 
 Sidecar behavior:
 - Stage 2 writes sidecar metadata with hashes.
+- Sidecar stores `stage2_object_transform` (resolved center, rotation, source, window, inferred bounds when available).
 - Sidecar metadata is validated for schema/hash correctness.
 - Final validation uses Stage 3 hash semantics when the output file has been mutated after Stage 2.
+
+Operator guidance:
+- For moved/rotated models, prefer explicit transform metadata in G-code comments or slicer-emitted `EXCLUDE_OBJECT_DEFINE` values to avoid fallback ambiguity.
 
 ## Stage 3 (optional)
 Implemented in `Ultra_Optimizer.py` via external `ArcWelder.exe`.
