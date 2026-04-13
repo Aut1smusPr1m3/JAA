@@ -18,6 +18,11 @@ Equivalent Batch launcher:
 scripts\windows\bootstrap.bat -InstallDev
 ```
 
+Optional lightweight GUI launcher (Windows only):
+```powershell
+python scripts/windows/bootstrap_gui.py
+```
+
 ## Default behavior
 - Creates or reuses `.venv`.
 - Installs `requirements.txt`.
@@ -54,6 +59,11 @@ or
 ```powershell
 ./scripts/windows/bootstrap.ps1 -VenvPath ".venv-win"
 ```
+
+## GUI installer notes
+- The GUI wraps `scripts/windows/bootstrap.ps1` and streams live output.
+- Configure the same options as CLI mode (dev deps, Open3D, tests, venv path, ArcWelder path/URL).
+- Provide either ArcWelder path OR ArcWelder URL, not both.
 
 ## Expected output markers
 During a successful run, expect these checkpoints in PowerShell output:
