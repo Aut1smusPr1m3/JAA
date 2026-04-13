@@ -49,6 +49,7 @@ jobs:
           Copy-Item requirements-optional.txt $staging
           Copy-Item requirements-windows.txt $staging
           Copy-Item README.md $staging
+          Copy-Item LICENSE $staging
           Copy-Item AGENTS.md $staging
           Copy-Item -Recurse docs $staging
           Copy-Item -Recurse GCodeZAA $staging

@@ -35,6 +35,19 @@ This page tracks third-party dependency licenses used by this repository.
 - `ArcWelder.exe` can be included in Windows AIO artifacts when present.
 - Release owners must verify ArcWelder upstream license terms and bundle required notices if redistribution is enabled.
 
+## GPL compatibility review summary
+
+| Component | License metadata | GPL-3.0 distribution compatibility review | Status |
+|---|---|---|---|
+| `numpy` | BSD/MIT/Zlib/0BSD/CC0 expressions | Permissive family licenses are generally compatible with GPL redistribution when notices are preserved. | Reviewed |
+| `open3d` | MIT | MIT is generally compatible with GPL redistribution when copyright/license notices are preserved. | Reviewed |
+| `ArcWelder.exe` | external binary (license must be verified per source) | Compatibility depends on verified upstream license and redistribution terms of the exact binary source used. | Conditional / release-blocking until verified |
+
+Release rule for ArcWelder:
+1. Record exact source URL/path and version for bundled executable.
+2. Verify upstream redistribution terms.
+3. Bundle required notices with release assets.
+
 ## Transitive dependency inventory workflow
 Generate reproducible transitive license evidence before release:
 

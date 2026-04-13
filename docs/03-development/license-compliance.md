@@ -12,6 +12,7 @@ Use this checklist before publishing a release artifact.
 - [ ] Root `LICENSE` exists and matches intended project policy.
 - [ ] `README.md` and docs reference the active project license.
 - [ ] Any redistributable binary (for example `ArcWelder.exe`) has verified redistribution terms.
+- [ ] ArcWelder provenance record exists (source URL/path + version/hash + verification date).
 
 ### 2. Dependency evidence
 - [ ] Direct dependency licenses reviewed from requirements and `GCodeZAA/pyproject.toml`.
@@ -22,6 +23,7 @@ Use this checklist before publishing a release artifact.
 - [ ] Include `LICENSE` in release zip/assets.
 - [ ] Include dependency notice/inventory document in release docs or release notes.
 - [ ] Keep a copy of dependency lock snapshot (`requirements-lock.txt`) with release evidence.
+- [ ] If ArcWelder is bundled, include ArcWelder-required notices in bundle/release notes.
 
 ### 4. GPL source-availability obligations
 - [ ] Release notes identify source repository and tag/commit for binaries.
