@@ -16,6 +16,7 @@ This documentation matches the current repository behavior.
 - Developer workflow: [Testing](03-development/testing.md)
 - Release packaging: [Windows AIO release](03-development/release-aio.md)
 - Release compliance: [License compliance checklist](03-development/license-compliance.md)
+- Installer review: [Windows bootstrap audit](03-development/windows-bootstrap-audit.md)
 - Agent automation: [Doc agents](03-development/doc-agents.md)
 
 ## What runs today
