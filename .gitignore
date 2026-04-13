@@ -30,3 +30,8 @@ Thumbs.db
 *.egg-info/
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Generated wheelhouse artifacts (release assets, not source-controlled)
+wheels/**
+!wheels/
+!wheels/README.md
