@@ -2,30 +2,36 @@
 
 ## Unreleased
 
-### Changed
-- Updated README and user docs with critical operational warnings:
-  - run in the correct virtual environment,
-  - enable verbose G-code in OrcaSlicer,
-  - disable OrcaSlicer Arc fitting,
-  - verify and tune `MAX_SMOOTHING_ANGLE` for printer-specific clearance.
-- Stage 2 diagnostics hardening and continuity updates:
-  - added Stage 2 runtime env snapshot helper/logging,
-  - added explicit raycast device resolution info logging,
-  - clamped `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` to a safe runtime range (`10..5000`),
-  - fixed pre-window `G2/G3` context priming to respect `G90/G91` mode.
-  - added contextual implausible-segment diagnostics with process line/cmd metadata to speed up state-jump root-cause analysis.
+- No unreleased changes yet.
+
+## V2.2 - 2026-04-13
 
 ### Added
-- Regression and evidence tests for incident-class diagnostics:
-  - skip-vs-cap log path coverage for segment analysis,
-  - clamp-warning coverage for segment-limit sanitization,
-  - Stage 2 env snapshot rendering coverage,
-  - G92 and arc priming continuity coverage.
-- Development helper for release readiness evidence capture:
-  - `scripts/perf/capture_stage2_evidence.sh`
+- Windows bootstrap SYCL capability automation:
+  - installer now performs an Open3D SYCL capability check,
+  - optional strict install mode (`-RequireSyclGpu`) fails setup when no SYCL GPU is available.
+- Lightweight Windows bootstrap GUI (`scripts/windows/bootstrap_gui.py`) with parity for core CLI options.
+- Installer regression coverage:
+  - `test_windows_bootstrap_sync.py`
+  - `test_windows_bootstrap_gui.py`
+- Documentation expansion:
+  - architecture map,
+  - quickstart,
+  - license compliance checklist,
+  - dependency license inventory,
+  - bootstrap audit notes.
+
+### Changed
+- Stage 2 transform handoff is now fully documented for moved/rotated models:
+  - transform hint priority and fallback behavior,
+  - operational troubleshooting guidance,
+  - sidecar observability references.
+- Windows release packaging policy now includes root `LICENSE` in release bundles.
+- README rewritten to provide a complete, welcoming project overview, setup flow, and mechanism summary.
 
 ### Validation
 - `python -m pytest -q`
+- Result: `91 passed, 3 skipped`
 
 ## v0.2.1-alpha.6 - Documentation alignment release
 

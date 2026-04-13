@@ -1,90 +1,161 @@
-# Ultra_Optimizer
+# Ultra_Optimizer (JAA)
 
-Ultra_Optimizer is an OrcaSlicer-focused G-code post-processor with a three-stage pipeline:
+Ultra_Optimizer is a G-code post-processing pipeline designed for OrcaSlicer workflows.
 
-1. Stage 1 (always): kinematic optimization and M204 acceleration control.
-2. Stage 2 (optional): GCodeZAA surface-aware processing when STL models are available.
-3. Stage 3 (optional): ArcWelder arc compression when ArcWelder.exe is present.
+It helps you improve print-path behavior without changing your slicer profile manually each time. The project focuses on three things:
 
-Machine start/end safety:
-- Start G-code and end G-code are preserved unchanged.
-- Stage 1 and Stage 2 operate only inside detected printable object windows.
+- safer and more consistent motion behavior,
+- optional surface-aware non-planar adjustments,
+- optional output compaction through arc conversion.
 
-## Start here
-- [Documentation entry](docs/00-start-here.md)
-- [5-minute quickstart](docs/01-user-guides/quickstart.md)
-- [Installation](docs/01-user-guides/installation.md)
-- [Windows AIO setup](docs/01-user-guides/windows-aio-setup.md)
-- [OrcaSlicer integration](docs/01-user-guides/orcaslicer-integration.md)
-- [Troubleshooting](docs/01-user-guides/troubleshooting.md)
-- [Pipeline reference](docs/02-technical-reference/pipeline-stages.md)
+Current release target: `v2.2`.
 
-## Quick setup
+## What this project does
+
+Ultra_Optimizer reads your slicer-generated `.gcode`, processes it in stages, and writes optimized output while preserving machine start/end sections.
+
+At a high level:
+
+1. Stage 1 always runs and applies kinematic acceleration shaping (M204 behavior) in the printable object window.
+2. Stage 2 runs only when STL context and Open3D/GCodeZAA are available, adding surface-aware logic (including non-planar ironing support).
+3. Stage 3 runs only when `ArcWelder.exe` is available, converting eligible linear segments into arcs where possible.
+
+## How the mechanism works
+
+### Stage 1: Window-aware kinematic optimization
+
+- Detects printable object window boundaries using marker precedence.
+- Leaves machine start/end blocks unchanged.
+- Applies motion/acceleration strategy to printable content only.
+
+### Stage 2: STL-informed surface processing (optional)
+
+- Loads STL model data from `stl_models/`.
+- Resolves object transform using metadata priority:
+	- explicit `ZAA_OBJECT_POSITION` / `ZAA_OBJECT_ROTATION_DEG` hints,
+	- slicer `EXCLUDE_OBJECT_DEFINE CENTER=/ROTATION=` metadata,
+	- inferred printable-window bounds,
+	- origin fallback.
+- Performs raycast-backed height/contour analysis for qualifying extrusion moves.
+- Emits sidecar metadata and integrity hashes for observability.
+
+### Stage 3: Arc compression (optional)
+
+- Calls `ArcWelder.exe` if present in repository root.
+- Compresses suitable G1 paths into G2/G3 arcs.
+- Produces a smaller and cleaner final motion stream for compatible firmware.
+
+## Safety model
+
+Safety behavior is treated as non-negotiable:
+
+- build-plate floor enforced (`Z >= 0.0`),
+- smoothing safety limits capped by config constraints,
+- machine start/end G-code preserved unchanged,
+- fallback/default behavior logged for post-run diagnosis.
+
+## Quick start
+
+### Linux/macOS
+
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Optional full Stage 2 dependencies:
+Optional Stage 2 runtime stack:
+
 ```bash
 pip install -r requirements-optional.txt
 ```
 
-Windows all-in-one bootstrap:
+### Windows (AIO bootstrap)
+
 ```powershell
 ./scripts/windows/bootstrap.ps1 -InstallDev
 ```
 
-## Test
+Optional strict GPU capability requirement during install:
+
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -RequireSyclGpu
+```
+
+Optional GUI bootstrap launcher:
+
+```powershell
+python scripts/windows/bootstrap_gui.py
+```
+
+## Run the optimizer
+
+```bash
+python Ultra_Optimizer.py path/to/input.gcode
+```
+
+## Validate your setup
+
 ```bash
 python -m pytest -q
 ```
 
-## Critical warnings
-- Run the script from the correct project virtual environment. If OrcaSlicer calls a different Python interpreter, dependencies can be missing and Stage 2 can silently degrade/skip.
-- In OrcaSlicer, enable verbose G-code comments. Feature/comment markers are required for reliable detection of ironing and feature transitions.
-- In OrcaSlicer, disable Arc fitting. Arc conversion should be handled by the pipeline (Stage 3 / ArcWelder), not by the slicer.
-- For moved/rotated objects, ensure transform metadata is available to Stage 2 (comment hints or `EXCLUDE_OBJECT_DEFINE` fields). Missing rotation metadata defaults to `0deg` and can misalign surface mapping.
-- Set `MAX_SMOOTHING_ANGLE` for your printer's clearance limits. Default is conservative (`15deg`, hard-capped at `20deg`) but should still be validated for your nozzle/duct geometry.
+## Critical setup warnings
 
-## Performance tuning
-If Stage 2 raycasting is too slow on large files, tune sampling and profiling with env vars:
+- Run Ultra_Optimizer from the correct virtual environment used by OrcaSlicer post-processing.
+- Enable verbose G-code comments in OrcaSlicer.
+- Disable Arc fitting in OrcaSlicer so arc conversion is controlled by Stage 3.
+- Provide transform metadata for moved/rotated objects when possible.
+- Tune `MAX_SMOOTHING_ANGLE` for your printer and nozzle/duct clearance.
+
+## Performance and GPU acceleration
+
+Useful Stage 2 tuning environment variables:
 
 ```bash
-# Coarser sampling (higher is faster): default 0.2
+# Coarser sampling (higher value is faster)
 export GCODEZAA_SAMPLE_DISTANCE_MM=0.25
 
-# Hard cap of samples per segment (default 384)
+# Max points sampled per segment
 export GCODEZAA_MAX_SEGMENT_SAMPLES=128
 
-# Optional sanity guard for implausible XY jumps (default 1000mm)
-export GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM=1000
-
-# Batch size for ray submissions (default 4096)
+# Raycast batch size
 export GCODEZAA_BATCH_RAY_SIZE=8192
 
-# Device selection: auto|cpu:0|sycl:0 (CUDA maps to SYCL when available)
+# Device routing: auto|cpu:0|sycl:0
 export GCODEZAA_RAYCAST_DEVICE=auto
 
-# Optional strict mode: fail if GPU is required but unavailable
+# Fail if GPU acceleration is required but unavailable
 export GCODEZAA_REQUIRE_GPU=0
 
-# Optional pipeline profiling
+# Optional profiler output
 export ULTRA_OPTIMIZER_PROFILE=1
-python Ultra_Optimizer.py input.gcode
 ```
 
-Profiling output defaults to `ultra_optimizer_profile.prof` in repo root and can be opened with tools like `snakeviz`.
 For GPU acceleration, use an Open3D build/runtime with SYCL support and available SYCL GPU devices.
 
-Runtime notes:
-- Stage 2 logs an env snapshot (`[GCodeZAA] Stage 2 runtime env: ...`) for diagnostics.
-- Raycast resolver logs selected device (`AUTO -> SYCL:0` or `AUTO -> CPU:0`).
-- `GCODEZAA_MAX_SURFACE_FOLLOW_SEGMENT_MM` is safety-clamped to `10..5000` mm to avoid masking state-jump defects.
+## Documentation map
 
-## Notes
-- Open3D is optional for advanced Stage 2 raycasting workflows.
-- ArcWelder integration requires ArcWelder.exe in repository root.
-- Runtime logs are written to `kinematic_engine.log`.
-- Smoothing safety is conservative by default: `15deg` from vertical, hard-capped at `20deg`.
-- `MAX_SMOOTHING_ANGLE` is defined by `DEFAULT_MAX_SMOOTHING_ANGLE` in `GCodeZAA/gcodezaa/config.py`.
+- Start here: [docs/00-start-here.md](docs/00-start-here.md)
+- Quickstart: [docs/01-user-guides/quickstart.md](docs/01-user-guides/quickstart.md)
+- Installation: [docs/01-user-guides/installation.md](docs/01-user-guides/installation.md)
+- Windows AIO: [docs/01-user-guides/windows-aio-setup.md](docs/01-user-guides/windows-aio-setup.md)
+- OrcaSlicer integration: [docs/01-user-guides/orcaslicer-integration.md](docs/01-user-guides/orcaslicer-integration.md)
+- Troubleshooting: [docs/01-user-guides/troubleshooting.md](docs/01-user-guides/troubleshooting.md)
+- Pipeline reference: [docs/02-technical-reference/pipeline-stages.md](docs/02-technical-reference/pipeline-stages.md)
+- Architecture map: [docs/02-technical-reference/architecture-map.md](docs/02-technical-reference/architecture-map.md)
+- FAQ: [docs/04-reference/faq.md](docs/04-reference/faq.md)
+
+## Repository structure (core)
+
+- `Ultra_Optimizer.py`: main orchestrator (Stage 1 + Stage 2/3 handoff)
+- `GCodeZAA/gcodezaa/process.py`: Stage 2 processing pipeline
+- `GCodeZAA/gcodezaa/surface_analysis.py`: raycast/surface analysis helpers
+- `scripts/windows/bootstrap.ps1`: Windows bootstrap installer
+- `scripts/windows/bootstrap_gui.py`: GUI wrapper for bootstrap installer
+- `test_*.py`: regression and behavior tests
+
+## License
+
+This project is distributed under GPL-3.0 terms. See `LICENSE` and the dependency inventory in [docs/04-reference/dependency-licenses.md](docs/04-reference/dependency-licenses.md).
