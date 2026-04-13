@@ -36,6 +36,20 @@ Check:
 2. Running `python Ultra_Optimizer.py input.gcode` from that venv succeeds.
 3. Required dependencies in that venv are installed (`requirements.txt`, optional `requirements-optional.txt` if needed).
 
+## Windows bootstrap fails before completion
+Common signatures and fixes:
+1. `No compatible Python launcher found. Install Python 3.11 or 3.12 first.`
+: Install Python 3.11/3.12 and restart shell.
+2. `ArcWelder.exe not found. Provide -ArcWelderPath or -ArcWelderUrl.`
+: Re-run bootstrap with one ArcWelder source argument.
+3. `ArcWelderPath does not exist: ...`
+: Correct the local path or permissions.
+4. `Virtual environment python not found: ...`
+: Remove the broken venv directory and re-run bootstrap.
+
+Quick reference:
+- [Windows AIO setup](windows-aio-setup.md)
+
 ## Smoothing looks too aggressive or too weak
 Check:
 1. `DEFAULT_MAX_SMOOTHING_ANGLE` in `GCodeZAA/gcodezaa/config.py` matches your printer clearance constraints.
@@ -147,3 +161,4 @@ python -m pytest -q
 - [OrcaSlicer integration](orcaslicer-integration.md)
 - [Pipeline stages reference](../02-technical-reference/pipeline-stages.md)
 - [FAQ](../04-reference/faq.md)
+- [Windows AIO setup](windows-aio-setup.md)
