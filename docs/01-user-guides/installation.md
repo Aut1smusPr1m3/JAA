@@ -64,3 +64,9 @@ If Open3D is missing:
 
 ## Critical warning
 - Always run `Ultra_Optimizer.py` from this same activated virtual environment. If OrcaSlicer invokes a different Python interpreter, behavior can differ from terminal tests.
+
+## Next steps
+- [Windows AIO setup](windows-aio-setup.md)
+- [OrcaSlicer integration](orcaslicer-integration.md)
+- [Troubleshooting](troubleshooting.md)
+- [Pipeline stages reference](../02-technical-reference/pipeline-stages.md)

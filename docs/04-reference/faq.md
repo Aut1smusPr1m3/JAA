@@ -3,6 +3,10 @@
 ## Why is Stage 2 sometimes skipped?
 Stage 2 needs GCodeZAA import support and an STL file in `stl_models/`.
 
+## Why can moved or rotated models look misaligned in Stage 2?
+If explicit transform metadata is missing, Stage 2 may fall back to inferred center and `0deg` rotation.
+For reliable alignment, provide transform hints (`; ZAA_OBJECT_POSITION`, `; ZAA_OBJECT_ROTATION_DEG`) or ensure slicer output includes `EXCLUDE_OBJECT_DEFINE` center/rotation metadata.
+
 ## Why are some comments missing after processing?
 ArcWelder (Stage 3) rewrites output and strips comments.
 
@@ -52,3 +56,10 @@ The full transform is also saved in the sidecar `.meta` file under `stage2_objec
 
 ## What licence does this project use?
 GNU General Public License v3 (GPL-3.0). See `LICENSE` in the repository root.
+
+## Where are the detailed setup and diagnostics guides?
+- [Installation](../01-user-guides/installation.md)
+- [Windows AIO setup](../01-user-guides/windows-aio-setup.md)
+- [OrcaSlicer integration](../01-user-guides/orcaslicer-integration.md)
+- [Troubleshooting](../01-user-guides/troubleshooting.md)
+- [Pipeline stages reference](../02-technical-reference/pipeline-stages.md)

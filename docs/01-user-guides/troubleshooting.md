@@ -142,3 +142,8 @@ Reason:
 ```bash
 python -m pytest -q
 ```
+
+## Related guides
+- [OrcaSlicer integration](orcaslicer-integration.md)
+- [Pipeline stages reference](../02-technical-reference/pipeline-stages.md)
+- [FAQ](../04-reference/faq.md)

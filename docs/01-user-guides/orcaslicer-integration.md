@@ -41,3 +41,8 @@ EXCLUDE_OBJECT_DEFINE NAME=part.stl_0 CENTER=110.25,128.50 ROTATION=37.5
 ## Artifacts
 - Runtime log: `kinematic_engine.log`
 - Output: optimized in-place G-code
+
+## Related guides
+- [Troubleshooting](troubleshooting.md)
+- [Pipeline stages reference](../02-technical-reference/pipeline-stages.md)
+- [FAQ](../04-reference/faq.md)
