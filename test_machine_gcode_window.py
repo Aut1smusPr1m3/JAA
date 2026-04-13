@@ -73,3 +73,55 @@ def test_stage1_leaves_machine_start_and_end_unmodified(tmp_path: Path):
     assert output[1] == original_lines[1]
     assert output[-2] == original_lines[-2]
     assert output[-1] == original_lines[-1]
+
+
+def test_stage1_deduplicates_redundant_modal_feedrate_commands(tmp_path: Path):
+    gcode_file = tmp_path / "feedrate_dedup_test.gcode"
+    gcode_file.write_text(
+        "".join(
+            [
+                ";MACHINE_START\n",
+                "G1 X0 Y0 Z0.20 F1200\n",
+                "; printing object demo\n",
+                "G1 F1500\n",
+                "G1 F1500 ; duplicate\n",
+                "G1 X5.0 Y5.0 E0.12 F1500\n",
+                "G1 F1500\n",
+                "G1 F1200\n",
+                "G1 F1200\n",
+                "; stop printing object demo\n",
+                ";MACHINE_END\n",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    process_gcode(str(gcode_file))
+    output = gcode_file.read_text(encoding="utf-8")
+
+    assert output.count("G1 F1500\n") == 1
+    assert output.count("G1 F1200\n") == 1
+    assert "G1 X5.0 Y5.0 E0.12 F1500\n" in output
+
+
+def test_stage1_feedrate_dedup_can_be_disabled(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ULTRA_OPTIMIZER_DEDUP_MODAL_FEEDRATE", "0")
+    gcode_file = tmp_path / "feedrate_dedup_optout_test.gcode"
+    gcode_file.write_text(
+        "".join(
+            [
+                ";MACHINE_START\n",
+                "; printing object demo\n",
+                "G1 F1500\n",
+                "G1 F1500\n",
+                "; stop printing object demo\n",
+                ";MACHINE_END\n",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    process_gcode(str(gcode_file))
+    output = gcode_file.read_text(encoding="utf-8")
+
+    assert output.count("G1 F1500\n") == 2

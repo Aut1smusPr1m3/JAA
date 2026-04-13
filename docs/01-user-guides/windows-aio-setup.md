@@ -55,6 +55,10 @@ or
 ./scripts/windows/bootstrap.ps1 -InstallDev -RequireSyclGpu
 ```
 
+Important:
+- Open3D upstream prebuilt SYCL Python wheels target Linux (Ubuntu 22.04+) workflows.
+- On Windows, strict SYCL GPU mode usually requires a custom Open3D/SYCL toolchain build and proper GPU runtime/drivers.
+
 - Skip tests:
 ```powershell
 ./scripts/windows/bootstrap.ps1 -InstallDev -SkipTests
@@ -79,7 +83,9 @@ During a successful run, expect these checkpoints in PowerShell output:
 - `[INFO] Running bootstrap smoke checks`
 - `numpy <version>` and `open3d True/False`
 - `[INFO] Running Open3D SYCL capability check`
-- `[INFO] SYCL devices: ...` and `[INFO] SYCL GPU available: True/False`
+- `[INFO] SYCL devices: ...`
+- `[INFO] SYCL:0 available: True/False`
+- `[INFO] SYCL GPU candidates: ...`
 - `[SUCCESS] Windows bootstrap completed.`
 
 ## Common failure signatures
@@ -91,8 +97,8 @@ During a successful run, expect these checkpoints in PowerShell output:
 : Verify file path and permissions.
 - `Virtual environment python not found: ...`
 : Remove broken venv path and re-run bootstrap.
-- `SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available.`
-: Install a SYCL-capable Open3D runtime and working SYCL GPU driver/runtime, or run without `-RequireSyclGpu`.
+- `SYCL GPU check failed. Use Open3D SYCL setup guidance (Linux x86_64 wheel/runtime or custom build), install correct GPU drivers, and ensure at least one SYCL GPU device is available.`
+: Follow Linux SYCL install guidance in [installation.md](installation.md), or run without `-RequireSyclGpu`.
 - `Tests skipped because -InstallDev was not set.`
 : Re-run with `-InstallDev` if you want pytest executed by bootstrap.
 

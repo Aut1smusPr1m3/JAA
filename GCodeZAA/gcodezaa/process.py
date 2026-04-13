@@ -221,11 +221,25 @@ def _sycl_devices() -> list[str]:
         return []
 
 
+def _sycl_device_available(spec: str = "SYCL:0") -> bool:
+    if open3d is None:
+        return False
+    if not hasattr(open3d.core, "sycl"):
+        return False
+    try:
+        return bool(open3d.core.sycl.is_available(open3d.core.Device(spec)))
+    except Exception:
+        return False
+
+
 def _sycl_gpu_available() -> bool:
     devices = _sycl_devices()
     if not devices:
         return False
-    return any("gpu" in d.lower() for d in devices)
+    has_gpu_label = any("gpu" in d.lower() for d in devices)
+    if not has_gpu_label:
+        return False
+    return _sycl_device_available("SYCL:0")
 
 
 def resolve_raycast_device_spec() -> str:

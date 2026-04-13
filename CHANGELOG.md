@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
+### Added
+- Linux SYCL install helper: `scripts/linux/install_open3d_sycl.sh`.
+- Linux SYCL installer contract tests: `test_linux_sycl_install_script.py`.
+
+### Changed
+- GPU installation guidance now follows Open3D SYCL upstream constraints:
+  - explicit Linux-focused prebuilt wheel guidance,
+  - Windows strict SYCL mode now reports platform-aware runtime guidance,
+  - docs include required driver/runtime reminders and Intel raycasting package note.
+- Stage 1 post-processing now removes redundant feedrate-only modal commands (`G0/G1 F...`) inside printable windows.
 
 ## V2.2 - 2026-04-13
 

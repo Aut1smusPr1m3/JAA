@@ -68,3 +68,75 @@ def test_resolve_device_cpu_logs_explicit_selection(monkeypatch, caplog):
 
     assert process.resolve_raycast_device_spec() == "CPU:0"
     assert "Raycast device resolved: CPU:0" in caplog.text
+
+
+def test_sycl_gpu_available_requires_gpu_device_and_sycl0(monkeypatch):
+    class _FakeSycl:
+        @staticmethod
+        def get_available_devices():
+            return ["SYCL GPU 0", "SYCL CPU 0"]
+
+        @staticmethod
+        def is_available(_device):
+            return True
+
+    class _FakeDevice:
+        def __init__(self, spec):
+            self.spec = spec
+
+    fake_open3d = type(
+        "FakeOpen3D",
+        (),
+        {"core": type("FakeCore", (), {"sycl": _FakeSycl, "Device": _FakeDevice})},
+    )
+    monkeypatch.setattr(process, "open3d", fake_open3d)
+
+    assert process._sycl_gpu_available() is True
+
+
+def test_sycl_gpu_available_rejects_host_only_fallback(monkeypatch):
+    class _FakeSycl:
+        @staticmethod
+        def get_available_devices():
+            return ["SYCL host device", "SYCL CPU 0"]
+
+        @staticmethod
+        def is_available(_device):
+            return True
+
+    class _FakeDevice:
+        def __init__(self, spec):
+            self.spec = spec
+
+    fake_open3d = type(
+        "FakeOpen3D",
+        (),
+        {"core": type("FakeCore", (), {"sycl": _FakeSycl, "Device": _FakeDevice})},
+    )
+    monkeypatch.setattr(process, "open3d", fake_open3d)
+
+    assert process._sycl_gpu_available() is False
+
+
+def test_sycl_gpu_available_requires_sycl0_device_availability(monkeypatch):
+    class _FakeSycl:
+        @staticmethod
+        def get_available_devices():
+            return ["SYCL GPU 0"]
+
+        @staticmethod
+        def is_available(_device):
+            return False
+
+    class _FakeDevice:
+        def __init__(self, spec):
+            self.spec = spec
+
+    fake_open3d = type(
+        "FakeOpen3D",
+        (),
+        {"core": type("FakeCore", (), {"sycl": _FakeSycl, "Device": _FakeDevice})},
+    )
+    monkeypatch.setattr(process, "open3d", fake_open3d)
+
+    assert process._sycl_gpu_available() is False

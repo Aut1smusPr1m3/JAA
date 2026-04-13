@@ -27,6 +27,7 @@ At a high level:
 - Detects printable object window boundaries using marker precedence.
 - Leaves machine start/end blocks unchanged.
 - Applies motion/acceleration strategy to printable content only.
+- Deduplicates redundant feedrate-only modal `G0/G1 F...` commands in the printable window to reduce command noise.
 
 ### Stage 2: STL-informed surface processing (optional)
 
@@ -134,6 +135,12 @@ export ULTRA_OPTIMIZER_PROFILE=1
 ```
 
 For GPU acceleration, use an Open3D build/runtime with SYCL support and available SYCL GPU devices.
+
+Open3D SYCL installation guidance summary:
+- official prebuilt SYCL Python wheels are Linux-focused (Ubuntu 22.04+),
+- use the helper installer: `bash scripts/linux/install_open3d_sycl.sh`,
+- install correct GPU drivers/runtime,
+- for Intel GPU raycasting, install `intel-level-zero-gpu-raytracing`.
 
 ## Documentation map
 

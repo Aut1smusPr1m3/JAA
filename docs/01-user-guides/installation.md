@@ -62,6 +62,30 @@ If Open3D is missing:
 - core processing still works,
 - Stage 2 raycasting is skipped/fallback behavior is used.
 
+## Linux SYCL GPU installation path (Open3D upstream guidance)
+Open3D's prebuilt SYCL Python wheels are Linux-focused (Ubuntu 22.04+).
+
+Use the helper script to install an `open3d_xpu` wheel and verify SYCL device visibility:
+
+```bash
+bash scripts/linux/install_open3d_sycl.sh
+```
+
+What this script does:
+- installs a Linux x86_64 `open3d_xpu` wheel for your Python version,
+- verifies `open3d.core.sycl` is available,
+- checks SYCL devices and `SYCL:0` availability,
+- warns if no GPU-capable SYCL device is detected.
+
+Environment overrides:
+- `OPEN3D_SYCL_VERSION` to change expected wheel version,
+- `OPEN3D_SYCL_BASE_URL` to change release base URL,
+- `OPEN3D_SYCL_WHEEL_URL` to provide an explicit wheel URL.
+
+Notes from upstream guidance:
+- install correct GPU drivers/runtime,
+- for Intel GPU raycasting, install `intel-level-zero-gpu-raytracing`.
+
 ## Critical warning
 - Always run `Ultra_Optimizer.py` from this same activated virtual environment. If OrcaSlicer invokes a different Python interpreter, behavior can differ from terminal tests.
 

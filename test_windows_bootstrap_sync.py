@@ -31,3 +31,5 @@ def test_bootstrap_default_and_optional_install_logic_match_windows_requirements
     assert "& $venvPython -m pip install -r requirements-optional.txt" in script
     assert "[INFO] Running Open3D SYCL capability check" in script
     assert "Invoke-Open3DSyclCheck -PythonExe $venvPython -RequireGpu:$RequireSyclGpu" in script
+    assert "open3d.core.sycl.is_available(open3d.core.Device(\"SYCL:0\"))" in script
+    assert "[INFO] SYCL:0 available:" in script

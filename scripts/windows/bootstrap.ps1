@@ -92,6 +92,7 @@ function Invoke-Open3DSyclCheck {
 
     $checkScript = @"
 import importlib.util
+import platform
 import sys
 
 if importlib.util.find_spec("open3d") is None:
@@ -110,11 +111,22 @@ except Exception as exc:
     print(f"[WARN] Failed to query SYCL devices: {exc}")
     sys.exit(4)
 
-gpu_devices = [d for d in devices if "gpu" in d.lower()]
-print(f"[INFO] SYCL devices: {devices if devices else 'none'}")
-print(f"[INFO] SYCL GPU available: {bool(gpu_devices)}")
+try:
+    sycl0_available = bool(open3d.core.sycl.is_available(open3d.core.Device("SYCL:0")))
+except Exception as exc:
+    print(f"[WARN] Failed to check SYCL:0 availability: {exc}")
+    sys.exit(6)
 
-sys.exit(0 if gpu_devices else 5)
+gpu_devices = [d for d in devices if "gpu" in d.lower()]
+print(f"[INFO] Host platform: {platform.system()} {platform.release()}")
+print(f"[INFO] SYCL devices: {devices if devices else 'none'}")
+print(f"[INFO] SYCL:0 available: {sycl0_available}")
+print(f"[INFO] SYCL GPU candidates: {gpu_devices if gpu_devices else 'none'}")
+
+if platform.system().lower() == "windows" and not gpu_devices:
+    print("[WARN] Open3D upstream SYCL Python wheels are Linux-focused (Ubuntu 22.04+). Windows SYCL GPU usually requires a custom Open3D/SYCL toolchain build.")
+
+sys.exit(0 if (sycl0_available and gpu_devices) else 5)
 "@
 
     & $PythonExe -c $checkScript
@@ -125,7 +137,7 @@ sys.exit(0 if gpu_devices else 5)
     }
 
     if ($RequireGpu) {
-        throw "SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available."
+        throw "SYCL GPU check failed. Use Open3D SYCL setup guidance (Linux x86_64 wheel/runtime or custom build), install correct GPU drivers, and ensure at least one SYCL GPU device is available."
     }
 
     Write-Host "[WARN] SYCL GPU not available; Stage 2 will use CPU fallback unless SYCL runtime/devices are installed."

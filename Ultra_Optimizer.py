@@ -79,6 +79,8 @@ HARD_MAX_SMOOTHING_ANGLE = 20.0
 ZAA_MAX_SMOOTHING_ANGLE = min(DEFAULT_MAX_SMOOTHING_ANGLE, HARD_MAX_SMOOTHING_ANGLE)  # degrees from vertical with full Z offset allowance
 G1_PATTERN = re.compile(r'([XYZ])([-+]?\d*\.\d+|[-+]?\d+)')
 ARC_PATTERN = re.compile(r'([XYZIJKF])([-+]?\d*\.\d+|[-+]?\d+)')  # G2/G3 arc parameters
+FEEDRATE_PARAM_PATTERN = re.compile(r'(^|[ \t])F([-+]?(?:\d+(?:\.\d*)?|\.\d+))(?=$|[ \t])', re.IGNORECASE)
+MOTION_AXIS_PARAM_PATTERN = re.compile(r'(^|[ \t])[XYZE]([-+]?(?:\d+(?:\.\d*)?|\.\d+))(?=$|[ \t])', re.IGNORECASE)
 Z_PARAM_PATTERN = re.compile(r'(^|[ \t])Z([-+]?(?:\d+(?:\.\d*)?|\.\d+))')
 PRINT_OBJECT_START_RE = re.compile(r'^\s*;\s*printing object\b', re.IGNORECASE)
 PRINT_OBJECT_STOP_RE = re.compile(r'^\s*;\s*stop printing object\b', re.IGNORECASE)
@@ -155,6 +157,26 @@ def safe_parse_arc(cmd_strip, is_cw):
     f_speed = params.get('F')
     
     return has_xy, x_end, y_end, z_end, i_offset, j_offset, f_speed
+
+
+def extract_feedrate(cmd_strip):
+    """Extract modal feedrate value from a command, if present."""
+    match = FEEDRATE_PARAM_PATTERN.search(cmd_strip)
+    if not match:
+        return None
+    try:
+        return float(match.group(2))
+    except ValueError:
+        return None
+
+
+def _is_modal_feedrate_only_move(cmd_strip):
+    """Detect G0/G1 commands that only set feedrate and perform no motion/extrusion."""
+    if not (cmd_strip.startswith('G0 ') or cmd_strip.startswith('G1 ')):
+        return False
+    if extract_feedrate(cmd_strip) is None:
+        return False
+    return MOTION_AXIS_PARAM_PATTERN.search(cmd_strip) is None
 
 def calculate_arc_length(x1, y1, z1, x2, y2, z2, i, j, is_cw):
     """Calculate TRUE 3D arc length handling helical ZAA moves."""
@@ -727,6 +749,20 @@ def _prime_stage1_state(lines, process_start):
 
     return c_pos, local_max_accel, c_acc
 
+
+def _prime_stage1_feedrate(lines, process_start):
+    """Prime modal feedrate state from machine-start commands before the printable window."""
+    current_feedrate = None
+    for line in lines[:process_start]:
+        cmd_strip = line.split(';', 1)[0].strip()
+        if not cmd_strip:
+            continue
+        if cmd_strip.startswith(('G0 ', 'G1 ', 'G2 ', 'G3 ')):
+            feedrate = extract_feedrate(cmd_strip)
+            if feedrate is not None:
+                current_feedrate = feedrate
+    return current_feedrate
+
 def restore_from_backup(gcode_file, backup_file):
     """Restore G-code from backup if processing failed."""
     try:
@@ -1091,6 +1127,13 @@ def process_gcode(file_path):
 
     optimized = []
     c_pos, local_max_accel, c_acc = _prime_stage1_state(lines, process_start)
+    current_feedrate = _prime_stage1_feedrate(lines, process_start)
+    dedup_modal_feedrate = os.getenv("ULTRA_OPTIMIZER_DEDUP_MODAL_FEEDRATE", "1").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     prev_vec = None
 
     for i, line in enumerate(lines):
@@ -1112,6 +1155,24 @@ def process_gcode(file_path):
         
         cmd_strip = raw.split(';', 1)[0].strip()
 
+        if dedup_modal_feedrate and _is_modal_feedrate_only_move(cmd_strip):
+            feedrate = extract_feedrate(cmd_strip)
+            if (
+                feedrate is not None
+                and current_feedrate is not None
+                and abs(feedrate - current_feedrate) <= 1e-9
+            ):
+                logging.debug(
+                    "[PIPELINE] Skipping redundant modal feedrate command at line %d: F%.3f",
+                    i,
+                    feedrate,
+                )
+                continue
+
+            current_feedrate = feedrate
+            optimized.append(raw + nl)
+            continue
+
         # 1. Feature Tracking
         if cmd_strip.startswith('M204 '):
             for p in cmd_strip.split()[1:]:
@@ -1126,6 +1187,7 @@ def process_gcode(file_path):
         # 2. Kinematische Bewegungsanalyse
         if cmd_strip.startswith('G1 '):
             has_xy, nx, ny, nz = safe_parse_g1(cmd_strip)
+            line_feedrate = extract_feedrate(cmd_strip)
 
             if has_xy or nz is not None:
                 tx = nx if nx is not None else c_pos[0]
@@ -1168,6 +1230,9 @@ def process_gcode(file_path):
                     prev_vec = vec
                 else:
                     prev_vec = None
+
+                if line_feedrate is not None:
+                    current_feedrate = line_feedrate
                     
                 c_pos = new_pos
                 continue
@@ -1201,12 +1266,19 @@ def process_gcode(file_path):
                 # Update position
                 new_pos = [tx, ty, tz]
                 c_pos = new_pos
+                if f_speed is not None:
+                    current_feedrate = f_speed
                 
                 # Arcs reset kinematic vector tracking (can't predict next segment angle)
                 prev_vec = None
                 continue
 
         # Passthrough für alle anderen Befehle
+        if cmd_strip.startswith(('G0 ', 'G1 ', 'G2 ', 'G3 ')):
+            feedrate = extract_feedrate(cmd_strip)
+            if feedrate is not None:
+                current_feedrate = feedrate
+
         optimized.append(raw + nl)
         
         # Sicherheits-Break der Kinematik-Kette

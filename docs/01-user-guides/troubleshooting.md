@@ -46,8 +46,8 @@ Common signatures and fixes:
 : Correct the local path or permissions.
 4. `Virtual environment python not found: ...`
 : Remove the broken venv directory and re-run bootstrap.
-5. `SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available.`
-: Use a SYCL-capable Open3D/runtime + GPU stack, or remove strict `-RequireSyclGpu` mode.
+5. `SYCL GPU check failed. Use Open3D SYCL setup guidance (Linux x86_64 wheel/runtime or custom build), install correct GPU drivers, and ensure at least one SYCL GPU device is available.`
+: For official prebuilt SYCL wheel flow, run `bash scripts/linux/install_open3d_sycl.sh` on Linux. On Windows, use strict mode only when you have a custom SYCL-capable Open3D runtime.
 
 Quick reference:
 - [Windows AIO setup](windows-aio-setup.md)
@@ -120,6 +120,10 @@ GCODEZAA_REQUIRE_GPU=1 python Ultra_Optimizer.py input.gcode
 
 If logs say SYCL GPU unavailable, ensure your Open3D runtime and system drivers expose SYCL devices.
 
+Open3D upstream note:
+- prebuilt SYCL Python wheels are Linux-focused (Ubuntu 22.04+),
+- for Intel GPU raycasting, install `intel-level-zero-gpu-raytracing`.
+
 Expected diagnostics in logs:
 1. Stage 2 prints runtime env snapshot: `[GCodeZAA] Stage 2 runtime env: ...`.
 2. Device resolver prints selection: `Raycast device resolved: AUTO -> SYCL:0` or `AUTO -> CPU:0`.
@@ -127,7 +131,7 @@ Expected diagnostics in logs:
 
 Quick SYCL check:
 ```bash
-python -c "import open3d; print(open3d.core.sycl.get_available_devices() if hasattr(open3d.core, 'sycl') else 'SYCL not available')"
+python -c "import open3d as o3d; print(o3d.core.sycl.get_available_devices() if hasattr(o3d.core, 'sycl') else 'SYCL not available'); print('SYCL:0 available=', o3d.core.sycl.is_available(o3d.core.Device('SYCL:0')) if hasattr(o3d.core, 'sycl') else False)"
 ```
 
 ## Implausible segment distance logs
