@@ -10,6 +10,7 @@ def build_bootstrap_command(
     repo_root: Path,
     install_dev: bool,
     install_open3d: bool,
+    require_sycl_gpu: bool,
     skip_tests: bool,
     venv_path: str,
     arcwelder_path: str,
@@ -31,6 +32,8 @@ def build_bootstrap_command(
         cmd.append("-InstallDev")
     if not install_open3d:
         cmd.append("-InstallOpen3D:$false")
+    if require_sycl_gpu:
+        cmd.append("-RequireSyclGpu")
     if skip_tests:
         cmd.append("-SkipTests")
 
@@ -51,6 +54,7 @@ class BootstrapGui(tk.Tk):
 
         self.install_dev = tk.BooleanVar(value=True)
         self.install_open3d = tk.BooleanVar(value=True)
+        self.require_sycl_gpu = tk.BooleanVar(value=False)
         self.skip_tests = tk.BooleanVar(value=False)
         self.venv_path = tk.StringVar(value=".venv")
         self.arcwelder_path = tk.StringVar(value="")
@@ -68,19 +72,22 @@ class BootstrapGui(tk.Tk):
         tk.Checkbutton(frm, text="Install Open3D (optional Stage 2)", variable=self.install_open3d).grid(
             row=1, column=0, sticky="w"
         )
-        tk.Checkbutton(frm, text="Skip tests", variable=self.skip_tests).grid(
+        tk.Checkbutton(frm, text="Require SYCL GPU (fail if unavailable)", variable=self.require_sycl_gpu).grid(
             row=2, column=0, sticky="w"
         )
+        tk.Checkbutton(frm, text="Skip tests", variable=self.skip_tests).grid(
+            row=3, column=0, sticky="w"
+        )
 
-        tk.Label(frm, text="Venv path:").grid(row=3, column=0, sticky="w", pady=(8, 0))
-        tk.Entry(frm, textvariable=self.venv_path, width=36).grid(row=3, column=1, sticky="w", pady=(8, 0))
+        tk.Label(frm, text="Venv path:").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        tk.Entry(frm, textvariable=self.venv_path, width=36).grid(row=4, column=1, sticky="w", pady=(8, 0))
 
-        tk.Label(frm, text="ArcWelder local path (optional):").grid(row=4, column=0, sticky="w", pady=(8, 0))
-        tk.Entry(frm, textvariable=self.arcwelder_path, width=60).grid(row=4, column=1, sticky="w", pady=(8, 0))
-        tk.Button(frm, text="Browse", command=self._browse_arcwelder).grid(row=4, column=2, padx=6, pady=(8, 0))
+        tk.Label(frm, text="ArcWelder local path (optional):").grid(row=5, column=0, sticky="w", pady=(8, 0))
+        tk.Entry(frm, textvariable=self.arcwelder_path, width=60).grid(row=5, column=1, sticky="w", pady=(8, 0))
+        tk.Button(frm, text="Browse", command=self._browse_arcwelder).grid(row=5, column=2, padx=6, pady=(8, 0))
 
-        tk.Label(frm, text="ArcWelder URL (optional):").grid(row=5, column=0, sticky="w", pady=(8, 0))
-        tk.Entry(frm, textvariable=self.arcwelder_url, width=60).grid(row=5, column=1, sticky="w", pady=(8, 0))
+        tk.Label(frm, text="ArcWelder URL (optional):").grid(row=6, column=0, sticky="w", pady=(8, 0))
+        tk.Entry(frm, textvariable=self.arcwelder_url, width=60).grid(row=6, column=1, sticky="w", pady=(8, 0))
 
         action_row = tk.Frame(self)
         action_row.pack(fill=tk.X, padx=12, pady=6)
@@ -116,6 +123,7 @@ class BootstrapGui(tk.Tk):
             repo_root=self.repo_root,
             install_dev=self.install_dev.get(),
             install_open3d=self.install_open3d.get(),
+            require_sycl_gpu=self.require_sycl_gpu.get(),
             skip_tests=self.skip_tests.get(),
             venv_path=self.venv_path.get(),
             arcwelder_path=self.arcwelder_path.get(),

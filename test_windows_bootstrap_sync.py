@@ -25,6 +25,9 @@ def test_bootstrap_default_and_optional_install_logic_match_windows_requirements
 
     # Default behavior should include optional Stage 2 dependency install path.
     assert "[switch]$InstallOpen3D = $true" in script
+    assert "[switch]$RequireSyclGpu" in script
     assert "& $venvPython -m pip install -r requirements.txt" in script
     assert "if ($InstallOpen3D)" in script
     assert "& $venvPython -m pip install -r requirements-optional.txt" in script
+    assert "[INFO] Running Open3D SYCL capability check" in script
+    assert "Invoke-Open3DSyclCheck -PythonExe $venvPython -RequireGpu:$RequireSyclGpu" in script

@@ -50,6 +50,11 @@ or
 ./scripts/windows/bootstrap.ps1 -InstallOpen3D:$false
 ```
 
+- Require SYCL GPU (fail install if unavailable):
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -RequireSyclGpu
+```
+
 - Skip tests:
 ```powershell
 ./scripts/windows/bootstrap.ps1 -InstallDev -SkipTests
@@ -63,6 +68,7 @@ or
 ## GUI installer notes
 - The GUI wraps `scripts/windows/bootstrap.ps1` and streams live output.
 - Configure the same options as CLI mode (dev deps, Open3D, tests, venv path, ArcWelder path/URL).
+- Optional strict mode is available to require SYCL GPU support during install.
 - Provide either ArcWelder path OR ArcWelder URL, not both.
 
 ## Expected output markers
@@ -72,6 +78,8 @@ During a successful run, expect these checkpoints in PowerShell output:
 - `[INFO] Installing dependencies`
 - `[INFO] Running bootstrap smoke checks`
 - `numpy <version>` and `open3d True/False`
+- `[INFO] Running Open3D SYCL capability check`
+- `[INFO] SYCL devices: ...` and `[INFO] SYCL GPU available: True/False`
 - `[SUCCESS] Windows bootstrap completed.`
 
 ## Common failure signatures
@@ -83,6 +91,8 @@ During a successful run, expect these checkpoints in PowerShell output:
 : Verify file path and permissions.
 - `Virtual environment python not found: ...`
 : Remove broken venv path and re-run bootstrap.
+- `SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available.`
+: Install a SYCL-capable Open3D runtime and working SYCL GPU driver/runtime, or run without `-RequireSyclGpu`.
 - `Tests skipped because -InstallDev was not set.`
 : Re-run with `-InstallDev` if you want pytest executed by bootstrap.
 

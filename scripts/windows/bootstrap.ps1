@@ -2,6 +2,7 @@
 param(
     [string]$VenvPath = ".venv",
     [switch]$InstallOpen3D = $true,
+    [switch]$RequireSyclGpu,
     [switch]$InstallDev,
     [string]$ArcWelderPath = "",
     [string]$ArcWelderUrl = "",
@@ -83,6 +84,53 @@ function Ensure-ArcWelder {
     }
 }
 
+function Invoke-Open3DSyclCheck {
+    param(
+        [string]$PythonExe,
+        [switch]$RequireGpu
+    )
+
+    $checkScript = @"
+import importlib.util
+import sys
+
+if importlib.util.find_spec("open3d") is None:
+    print("[WARN] Open3D not installed; skipping SYCL capability check")
+    sys.exit(2)
+
+import open3d
+
+if not hasattr(open3d.core, "sycl"):
+    print("[WARN] Open3D runtime does not expose SYCL backend")
+    sys.exit(3)
+
+try:
+    devices = [str(d) for d in open3d.core.sycl.get_available_devices()]
+except Exception as exc:
+    print(f"[WARN] Failed to query SYCL devices: {exc}")
+    sys.exit(4)
+
+gpu_devices = [d for d in devices if "gpu" in d.lower()]
+print(f"[INFO] SYCL devices: {devices if devices else 'none'}")
+print(f"[INFO] SYCL GPU available: {bool(gpu_devices)}")
+
+sys.exit(0 if gpu_devices else 5)
+"@
+
+    & $PythonExe -c $checkScript
+    $checkExitCode = $LASTEXITCODE
+
+    if ($checkExitCode -eq 0) {
+        return
+    }
+
+    if ($RequireGpu) {
+        throw "SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available."
+    }
+
+    Write-Host "[WARN] SYCL GPU not available; Stage 2 will use CPU fallback unless SYCL runtime/devices are installed."
+}
+
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptRoot "..\..\")).Path
 Set-Location $repoRoot
@@ -125,6 +173,11 @@ New-Item -ItemType Directory -Path (Join-Path $repoRoot "stl_models") -Force | O
 
 Write-Host "[INFO] Running bootstrap smoke checks"
 & $venvPython -c "import importlib.util, numpy; print('numpy', numpy.__version__); print('open3d', bool(importlib.util.find_spec('open3d')))"
+
+if ($InstallOpen3D) {
+    Write-Host "[INFO] Running Open3D SYCL capability check"
+    Invoke-Open3DSyclCheck -PythonExe $venvPython -RequireGpu:$RequireSyclGpu
+}
 
 if (-not $SkipTests -and $InstallDev) {
     & $venvPython -m pytest -q -r s

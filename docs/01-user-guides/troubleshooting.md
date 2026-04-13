@@ -46,6 +46,8 @@ Common signatures and fixes:
 : Correct the local path or permissions.
 4. `Virtual environment python not found: ...`
 : Remove the broken venv directory and re-run bootstrap.
+5. `SYCL GPU check failed. Install an Open3D build/runtime with SYCL support and ensure a SYCL GPU device is available.`
+: Use a SYCL-capable Open3D/runtime + GPU stack, or remove strict `-RequireSyclGpu` mode.
 
 Quick reference:
 - [Windows AIO setup](windows-aio-setup.md)
