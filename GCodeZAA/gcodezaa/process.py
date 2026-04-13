@@ -544,12 +544,17 @@ def _build_surface_extrusions(
 def process_gcode(
     gcode: list[str],
     model_dir: str,
-    plate_object: tuple[str, float, float] | None = None,
+    plate_object: tuple[str, float, float] | tuple[str, float, float, float] | None = None,
 ) -> list[str]:
     ctx = ProcessorContext(gcode, model_dir)
     if plate_object is not None:
+        rotation_deg = plate_object[3] if len(plate_object) > 3 else 0.0
         scene, device = load_object(
-            ctx, plate_object[0], plate_object[1], plate_object[2]
+            ctx,
+            plate_object[0],
+            plate_object[1],
+            plate_object[2],
+            rotation_deg,
         )
         ctx.active_object = scene
         ctx.active_object_device = device
@@ -577,7 +582,11 @@ def process_gcode(
 
 
 def load_object(
-    ctx: ProcessorContext, name: str, x: float, y: float
+    ctx: ProcessorContext,
+    name: str,
+    x: float,
+    y: float,
+    rotation_deg: float = 0.0,
 ) -> tuple[object, object]:
     """Load STL model and create raycasting scene with position offset."""
     if open3d is None:
@@ -589,10 +598,38 @@ def load_object(
     
     logger.info(f"[GCodeZAA] Loading STL model: {name} on device {device_spec}")
     mesh = open3d.t.io.read_triangle_mesh(model_path, enable_post_processing=True)
-    
+
     min_bound = mesh.get_min_bound()
     max_bound = mesh.get_max_bound()
     center = min_bound + (max_bound - min_bound) / 2
+
+    if abs(rotation_deg) > 1e-9:
+        angle = math.radians(rotation_deg)
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        try:
+            dtype = mesh.vertex["positions"].dtype
+            device_for_tensor = mesh.vertex["positions"].device
+            rot = open3d.core.Tensor(
+                [
+                    [cos_a, -sin_a, 0.0],
+                    [sin_a, cos_a, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=dtype,
+                device=device_for_tensor,
+            )
+            mesh.rotate(rot, center)
+            min_bound = mesh.get_min_bound()
+            max_bound = mesh.get_max_bound()
+            center = min_bound + (max_bound - min_bound) / 2
+        except Exception as exc:
+            logger.warning(
+                "[GCodeZAA] Failed to apply %.3fdeg model rotation for '%s': %s",
+                rotation_deg,
+                name,
+                exc,
+            )
     
     # Translate mesh to position on build plate
     mesh.translate([x - center[0].item(), y - center[1].item(), -min_bound[2].item()])
@@ -600,7 +637,9 @@ def load_object(
     x_span = float((max_bound[0] - min_bound[0]).item())
     y_span = float((max_bound[1] - min_bound[1]).item())
     z_span = float((max_bound[2] - min_bound[2]).item())
-    logger.info(f"[GCodeZAA] Model bounds: X={x_span:.1f}mm, Y={y_span:.1f}mm, Z={z_span:.1f}mm")
+    logger.info(
+        f"[GCodeZAA] Model bounds: X={x_span:.1f}mm, Y={y_span:.1f}mm, Z={z_span:.1f}mm"
+    )
 
     mesh = mesh.to(device)
     scene = open3d.t.geometry.RaycastingScene(device=device)

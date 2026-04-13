@@ -93,6 +93,16 @@ INLINE_FEATURE_PATTERNS = [
     (re.compile(r'^\s*infill\b', re.IGNORECASE), 'infill'),
     (re.compile(r'^\s*perimeter\b', re.IGNORECASE), 'perimeter'),
 ]
+OBJECT_POSITION_HINT_RE = re.compile(
+    r"^\s*;\s*(?:ZAA_)?OBJECT_(?:POSITION|CENTER)\s*[:=]\s*"
+    r"([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*$",
+    re.IGNORECASE,
+)
+OBJECT_ROTATION_HINT_RE = re.compile(
+    r"^\s*;\s*(?:ZAA_)?OBJECT_(?:ROTATION|ROTATION_DEG|ANGLE(?:_DEG)?)\s*[:=]\s*"
+    r"([-+]?\d*\.?\d+)\s*$",
+    re.IGNORECASE,
+)
 
 # --- G2/G3 ARC COMMAND SUPPORT ---
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
@@ -475,6 +485,196 @@ def detect_machine_print_window(gcode_lines):
     return 0, len(gcode_lines) - 1, "full-file"
 
 
+def _parse_exclude_object_define_args(line):
+    """Parse EXCLUDE_OBJECT_DEFINE key=value payload into a dict."""
+    if not line.startswith("EXCLUDE_OBJECT_DEFINE"):
+        return {}
+
+    payload = line.removeprefix("EXCLUDE_OBJECT_DEFINE").strip()
+    args = {}
+    for token in payload.split():
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        args[key.strip().upper()] = value.strip()
+    return args
+
+
+def _extract_transform_hints_from_gcode(gcode_lines):
+    """Extract optional position/rotation hints from comments or EXCLUDE_OBJECT_DEFINE lines."""
+    hint_x = None
+    hint_y = None
+    hint_rotation = None
+    source = None
+
+    for line in gcode_lines:
+        if hint_x is None or hint_y is None:
+            pos_match = OBJECT_POSITION_HINT_RE.match(line)
+            if pos_match:
+                hint_x = float(pos_match.group(1))
+                hint_y = float(pos_match.group(2))
+                source = "comment-hint"
+
+        if hint_rotation is None:
+            rot_match = OBJECT_ROTATION_HINT_RE.match(line)
+            if rot_match:
+                hint_rotation = float(rot_match.group(1))
+                if source is None:
+                    source = "comment-hint"
+
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped.startswith("EXCLUDE_OBJECT_DEFINE"):
+            continue
+
+        args = _parse_exclude_object_define_args(stripped)
+        center = args.get("CENTER")
+        if center and (hint_x is None or hint_y is None):
+            try:
+                x_str, y_str = center.split(",", 1)
+                hint_x = float(x_str)
+                hint_y = float(y_str)
+                source = "exclude-object"
+            except ValueError:
+                pass
+
+        if hint_rotation is None:
+            for key in ("ROTATION", "ROTATION_DEG", "ANGLE", "ANGLE_DEG"):
+                if key in args:
+                    try:
+                        hint_rotation = float(args[key])
+                        if source is None:
+                            source = "exclude-object"
+                    except ValueError:
+                        pass
+                    break
+
+        if hint_x is not None and hint_y is not None and hint_rotation is not None:
+            break
+
+    return hint_x, hint_y, hint_rotation, source
+
+
+def _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end):
+    """Infer XY center from printable-window motion commands while respecting G90/G91/G92 state."""
+    relative_positioning = False
+    current_x = 0.0
+    current_y = 0.0
+    min_x = None
+    max_x = None
+    min_y = None
+    max_y = None
+
+    def _record_point(x, y):
+        nonlocal min_x, max_x, min_y, max_y
+        if min_x is None:
+            min_x = max_x = x
+            min_y = max_y = y
+            return
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+
+    for line in gcode_lines[:process_start]:
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("G90"):
+            relative_positioning = False
+            continue
+        if stripped.startswith("G91"):
+            relative_positioning = True
+            continue
+        if stripped.startswith("G92"):
+            has_xy, nx, ny, _nz = safe_parse_g1(stripped)
+            if has_xy:
+                current_x = nx if nx is not None else current_x
+                current_y = ny if ny is not None else current_y
+
+    for idx in range(process_start, min(process_end + 1, len(gcode_lines))):
+        stripped = gcode_lines[idx].split(";", 1)[0].strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("G90"):
+            relative_positioning = False
+            continue
+        if stripped.startswith("G91"):
+            relative_positioning = True
+            continue
+
+        if stripped.startswith("G92"):
+            has_xy, nx, ny, _nz = safe_parse_g1(stripped)
+            if has_xy:
+                current_x = nx if nx is not None else current_x
+                current_y = ny if ny is not None else current_y
+                _record_point(current_x, current_y)
+            continue
+
+        token = stripped.split(" ", 1)[0]
+        if token not in ("G0", "G1", "G2", "G3"):
+            continue
+
+        has_xy, nx, ny, _nz = safe_parse_g1(stripped)
+        if not has_xy:
+            continue
+
+        if relative_positioning:
+            current_x += nx if nx is not None else 0.0
+            current_y += ny if ny is not None else 0.0
+        else:
+            current_x = nx if nx is not None else current_x
+            current_y = ny if ny is not None else current_y
+
+        _record_point(current_x, current_y)
+
+    if min_x is None:
+        return None
+
+    center_x = (min_x + max_x) / 2.0
+    center_y = (min_y + max_y) / 2.0
+    return {
+        "center_x": center_x,
+        "center_y": center_y,
+        "bounds": {
+            "min_x": min_x,
+            "max_x": max_x,
+            "min_y": min_y,
+            "max_y": max_y,
+        },
+    }
+
+
+def resolve_stage2_object_transform(gcode_lines):
+    """Resolve Stage 2 transform (center + rotation) from hints and printable-window motion."""
+    process_start, process_end, _reason = detect_machine_print_window(gcode_lines)
+    hint_x, hint_y, hint_rotation, hint_source = _extract_transform_hints_from_gcode(gcode_lines)
+    inferred = _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end)
+
+    if hint_x is not None and hint_y is not None:
+        center_x = hint_x
+        center_y = hint_y
+        source = hint_source or "hint"
+    elif inferred is not None:
+        center_x = inferred["center_x"]
+        center_y = inferred["center_y"]
+        source = "inferred-window-bounds"
+    else:
+        center_x = 0.0
+        center_y = 0.0
+        source = "default-origin"
+
+    return {
+        "center_x": float(center_x),
+        "center_y": float(center_y),
+        "rotation_deg": float(hint_rotation) if hint_rotation is not None else 0.0,
+        "source": source,
+        "window_start": process_start,
+        "window_end": process_end,
+        "inferred_bounds": inferred["bounds"] if inferred is not None else None,
+    }
+
+
 def _prime_stage1_state(lines, process_start):
     """Prime Stage 1 positional/acceleration state using unmodified machine-start G-code."""
     c_pos = [0.0, 0.0, 0.0]
@@ -561,7 +761,13 @@ def _hash_file(file_path):
     return h.hexdigest()
 
 
-def build_stage2_metadata(gcode_lines, selected_model, stage2_input_sha256, stage2_output_sha256):
+def build_stage2_metadata(
+    gcode_lines,
+    selected_model,
+    stage2_input_sha256,
+    stage2_output_sha256,
+    stage2_object_transform=None,
+):
     ironing_ranges = detect_ironing_sections(gcode_lines)
     contour_markers = []
     for idx, line in enumerate(gcode_lines):
@@ -573,6 +779,7 @@ def build_stage2_metadata(gcode_lines, selected_model, stage2_input_sha256, stag
         "stage": "stage_2",
         "generated_unix": time.time(),
         "selected_model": selected_model,
+        "stage2_object_transform": stage2_object_transform,
         "stage2_input_sha256": stage2_input_sha256,
         "stage2_output_sha256": stage2_output_sha256,
         "line_count": len(gcode_lines),
@@ -1114,16 +1321,38 @@ if __name__ == "__main__":
                         stage_status["stage_2"] = "SKIPPED (no STL)"
                         remove_sidecar_metadata(gcode_file)
                     else:
-                        plate_object = (selected_model, 0.0, 0.0)
-
                         stage2_input_sha = _hash_file(gcode_file)
 
                         with open(gcode_file, 'r', encoding='utf-8') as f:
                             gcode_lines = f.readlines()
+
+                        stage2_transform = resolve_stage2_object_transform(gcode_lines)
+                        plate_object = (
+                            selected_model,
+                            stage2_transform["center_x"],
+                            stage2_transform["center_y"],
+                            stage2_transform["rotation_deg"],
+                        )
+                        if (
+                            abs(stage2_transform["rotation_deg"]) <= 1e-9
+                            and stage2_transform["source"] in ("inferred-window-bounds", "default-origin")
+                        ):
+                            logging.warning(
+                                "[GCodeZAA] No explicit object rotation metadata found; defaulting to 0.0deg. "
+                                "For rotated models, add '; ZAA_OBJECT_ROTATION_DEG: <deg>' (and optional "
+                                "'; ZAA_OBJECT_POSITION: x,y') or provide EXCLUDE_OBJECT_DEFINE ROTATION."
+                            )
+                        if stage2_transform["source"] == "default-origin":
+                            logging.warning(
+                                "[GCodeZAA] Could not infer object center from printable window; using origin "
+                                "(0,0). Consider adding '; ZAA_OBJECT_POSITION: x,y' for reliable alignment."
+                            )
                         invalidate_stale_sidecar(gcode_file, stage2_input_sha)
 
                         logging.info(
-                            f"[GCodeZAA] Using STL model '{selected_model}' for surface raycasting"
+                            f"[GCodeZAA] Using STL model '{selected_model}' for surface raycasting "
+                            f"at center=({stage2_transform['center_x']:.3f}, {stage2_transform['center_y']:.3f}) "
+                            f"rotation={stage2_transform['rotation_deg']:.3f}deg source={stage2_transform['source']}"
                         )
                         enhanced_gcode = gcodezaa_process(gcode_lines, model_dir, plate_object)
 
@@ -1137,6 +1366,7 @@ if __name__ == "__main__":
                             selected_model,
                             stage2_input_sha,
                             stage2_output_sha,
+                            stage2_object_transform=stage2_transform,
                         )
 
                         sidecar_path = write_sidecar_metadata(gcode_file, stage2_metadata)

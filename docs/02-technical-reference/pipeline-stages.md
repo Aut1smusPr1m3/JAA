@@ -26,14 +26,14 @@ Execution conditions:
 - at least one `.stl` present.
 
 Current handoff:
-- `Ultra_Optimizer.py` selects a primary STL and resolves transform data before handoff.
-- Position/rotation resolution order:
-	1. explicit comment hints (`; ZAA_OBJECT_POSITION: x,y`, `; ZAA_OBJECT_ROTATION_DEG: r`),
-	2. `EXCLUDE_OBJECT_DEFINE` metadata (`CENTER`, optional rotation fields),
-	3. inferred printable-window XY bounds center,
-	4. final fallback to origin with `0deg` rotation.
-- Stage 2 receives `plate_object=(name, center_x, center_y, rotation_deg)`.
-- For unresolved rotation or center inference fallback, runtime warnings are logged to aid diagnosis.
+- `Ultra_Optimizer.py` selects a primary STL, resolves object transform (center + rotation) via
+	`resolve_stage2_object_transform`, and passes `plate_object=(name, center_x, center_y, rotation_deg)`.
+- Transform resolution priority:
+	1. explicit G-code comment hints (`ZAA_OBJECT_POSITION` / `ZAA_OBJECT_ROTATION_DEG`),
+	2. `EXCLUDE_OBJECT_DEFINE CENTER=/ROTATION=` metadata,
+	3. inferred printable-window motion bounds,
+	4. fallback origin (0, 0) with 0° rotation.
+- Runtime warnings are emitted when rotation or center cannot be resolved explicitly.
 
 Responsibilities:
 - printable window processing with machine start/end passthrough,

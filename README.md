@@ -43,6 +43,7 @@ python -m pytest -q
 - Run the script from the correct project virtual environment. If OrcaSlicer calls a different Python interpreter, dependencies can be missing and Stage 2 can silently degrade/skip.
 - In OrcaSlicer, enable verbose G-code comments. Feature/comment markers are required for reliable detection of ironing and feature transitions.
 - In OrcaSlicer, disable Arc fitting. Arc conversion should be handled by the pipeline (Stage 3 / ArcWelder), not by the slicer.
+- For moved/rotated objects, ensure transform metadata is available to Stage 2 (comment hints or `EXCLUDE_OBJECT_DEFINE` fields). Missing rotation metadata defaults to `0deg` and can misalign surface mapping.
 - Set `MAX_SMOOTHING_ANGLE` for your printer's clearance limits. Default is conservative (`15deg`, hard-capped at `20deg`) but should still be validated for your nozzle/duct geometry.
 
 ## Performance tuning

@@ -13,6 +13,7 @@ from Ultra_Optimizer import (
     invalidate_stale_sidecar,
     load_sidecar_metadata,
     remove_sidecar_metadata,
+    resolve_stage2_object_transform,
     select_primary_stl_model,
     sidecar_hash_matches_file,
     sidecar_path_for_gcode,
@@ -333,3 +334,83 @@ def test_detect_ironing_sections_with_feature_and_inline_comments():
 
     sections = detect_ironing_sections(lines)
     assert sections == [(1, 6)]
+
+
+def test_resolve_stage2_object_transform_infers_center_from_window_bounds():
+    gcode = [
+        "; machine start\n",
+        "G90\n",
+        "; printing object cube id:1 copy 0\n",
+        "G1 X10 Y20\n",
+        "G1 X30 Y40\n",
+        "; stop printing object cube id:1 copy 0\n",
+    ]
+
+    transform = resolve_stage2_object_transform(gcode)
+    assert transform["center_x"] == 20.0
+    assert transform["center_y"] == 30.0
+    assert transform["rotation_deg"] == 0.0
+    assert transform["source"] == "inferred-window-bounds"
+    assert transform["inferred_bounds"] == {
+        "min_x": 10.0,
+        "max_x": 30.0,
+        "min_y": 20.0,
+        "max_y": 40.0,
+    }
+
+
+def test_resolve_stage2_object_transform_prefers_comment_hints_with_rotation():
+    gcode = [
+        "; ZAA_OBJECT_POSITION: 55.5,66.75\n",
+        "; ZAA_OBJECT_ROTATION_DEG: 37.5\n",
+        "G90\n",
+        "; printing object cube id:1 copy 0\n",
+        "G1 X10 Y20\n",
+        "G1 X30 Y40\n",
+        "; stop printing object cube id:1 copy 0\n",
+    ]
+
+    transform = resolve_stage2_object_transform(gcode)
+    assert transform["center_x"] == 55.5
+    assert transform["center_y"] == 66.75
+    assert transform["rotation_deg"] == 37.5
+    assert transform["source"] == "comment-hint"
+
+
+def test_resolve_stage2_object_transform_reads_exclude_object_define_rotation():
+    gcode = [
+        "EXCLUDE_OBJECT_DEFINE NAME=benchy.stl_0 CENTER=12.5,17.5 ROTATION=90\n",
+        "G90\n",
+        "; printing object benchy id:1 copy 0\n",
+        "G1 X0 Y0\n",
+        "; stop printing object benchy id:1 copy 0\n",
+    ]
+
+    transform = resolve_stage2_object_transform(gcode)
+    assert transform["center_x"] == 12.5
+    assert transform["center_y"] == 17.5
+    assert transform["rotation_deg"] == 90.0
+    assert transform["source"] == "exclude-object"
+
+
+def test_build_stage2_metadata_persists_object_transform():
+    lines = ["G1 X1 Y1 E0.1\n"]
+    transform = {
+        "center_x": 10.0,
+        "center_y": 20.0,
+        "rotation_deg": 45.0,
+        "source": "comment-hint",
+        "window_start": 0,
+        "window_end": 0,
+        "inferred_bounds": None,
+    }
+
+    metadata = build_stage2_metadata(
+        lines,
+        selected_model="Model.stl",
+        stage2_input_sha256="in",
+        stage2_output_sha256="out",
+        stage2_object_transform=transform,
+    )
+
+    assert metadata["stage2_object_transform"] == transform
