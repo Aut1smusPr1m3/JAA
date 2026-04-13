@@ -33,3 +33,14 @@ def test_bootstrap_default_and_optional_install_logic_match_windows_requirements
     assert "Invoke-Open3DSyclCheck -PythonExe $venvPython -RequireGpu:$RequireSyclGpu" in script
     assert "open3d.core.sycl.is_available(open3d.core.Device(\"SYCL:0\"))" in script
     assert "[INFO] SYCL:0 available:" in script
+    assert "[switch]$UseBundledWheels" in script
+    assert "[string]$WheelhousePath = \"wheels\"" in script
+    assert "[string]$Open3DWheelPath = \"\"" in script
+    assert "[switch]$SetupSyclToolchain" in script
+    assert "[switch]$BuildOpen3DSyclWithWsl" in script
+    assert "[switch]$InstallOneApiBaseToolkit" in script
+    assert "[string]$WslDistro = \"Ubuntu\"" in script
+    assert "pip install --no-index --find-links $resolvedWheelhouse -r requirements.txt" in script
+    assert "Bundled wheelhouse not found" in script
+    assert "Invoke-WindowsSyclToolchainSetup" in script
+    assert "Invoke-Open3DSyclBuildViaWsl" in script

@@ -30,6 +30,7 @@ python scripts/windows/bootstrap_gui.py
 - Installs `requirements-dev.txt` when `-InstallDev` is provided.
 - Ensures `ArcWelder.exe` exists in repo root.
 - Creates `stl_models/` if missing.
+- Release bundles now include a `wheels/` wheelhouse for offline installs.
 
 ## ArcWelder provisioning
 If `ArcWelder.exe` is already in repo root, nothing else is required.
@@ -50,6 +51,21 @@ or
 ./scripts/windows/bootstrap.ps1 -InstallOpen3D:$false
 ```
 
+- Install from bundled wheelhouse (release zip):
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -UseBundledWheels
+```
+
+- Custom wheelhouse location:
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -UseBundledWheels -WheelhousePath "wheels"
+```
+
+- Install Open3D from an explicit custom wheel:
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -Open3DWheelPath "wheels\open3d_custom.whl"
+```
+
 - Require SYCL GPU (fail install if unavailable):
 ```powershell
 ./scripts/windows/bootstrap.ps1 -InstallDev -RequireSyclGpu
@@ -58,6 +74,22 @@ or
 Important:
 - Open3D upstream prebuilt SYCL Python wheels target Linux (Ubuntu 22.04+) workflows.
 - On Windows, strict SYCL GPU mode usually requires a custom Open3D/SYCL toolchain build and proper GPU runtime/drivers.
+- This bootstrap does not install or modify NVIDIA GPU drivers.
+
+- Setup SYCL toolchain checks on Windows (oneAPI + sycl-ls probe):
+```powershell
+./scripts/windows/bootstrap.ps1 -SetupSyclToolchain
+```
+
+- Optionally install Intel oneAPI Base Toolkit via winget during setup:
+```powershell
+./scripts/windows/bootstrap.ps1 -SetupSyclToolchain -InstallOneApiBaseToolkit
+```
+
+- Build Open3D SYCL from source in WSL (custom build path):
+```powershell
+./scripts/windows/bootstrap.ps1 -SetupSyclToolchain -BuildOpen3DSyclWithWsl -WslDistro Ubuntu
+```
 
 - Skip tests:
 ```powershell
@@ -86,6 +118,8 @@ During a successful run, expect these checkpoints in PowerShell output:
 - `[INFO] SYCL devices: ...`
 - `[INFO] SYCL:0 available: True/False`
 - `[INFO] SYCL GPU candidates: ...`
+- `[INFO] Installing from bundled wheelhouse: ...` (when enabled)
+- `[INFO] Starting Windows SYCL toolchain setup` (when enabled)
 - `[SUCCESS] Windows bootstrap completed.`
 
 ## Common failure signatures
@@ -99,6 +133,12 @@ During a successful run, expect these checkpoints in PowerShell output:
 : Remove broken venv path and re-run bootstrap.
 - `SYCL GPU check failed. Use Open3D SYCL setup guidance (Linux x86_64 wheel/runtime or custom build), install correct GPU drivers, and ensure at least one SYCL GPU device is available.`
 : Follow Linux SYCL install guidance in [installation.md](installation.md), or run without `-RequireSyclGpu`.
+- `Bundled wheelhouse not found: ...`
+: Ensure the release zip includes `wheels/` and run from repo root, or disable `-UseBundledWheels`.
+- `Open3DWheelPath does not exist: ...`
+: Provide a valid wheel path relative to repo root or an absolute path.
+- `wsl.exe not found. Install WSL ...`
+: Install WSL and requested distro before running `-BuildOpen3DSyclWithWsl`.
 - `Tests skipped because -InstallDev was not set.`
 : Re-run with `-InstallDev` if you want pytest executed by bootstrap.
 

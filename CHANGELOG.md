@@ -4,13 +4,17 @@
 
 ### Added
 - Linux SYCL install helper: `scripts/linux/install_open3d_sycl.sh`.
+- Linux SYCL source-build helper: `scripts/linux/build_open3d_sycl_from_source.sh`.
 - Linux SYCL installer contract tests: `test_linux_sycl_install_script.py`.
+- Windows release wheelhouse packaging and contract tests for bundled wheel installs.
 
 ### Changed
 - GPU installation guidance now follows Open3D SYCL upstream constraints:
   - explicit Linux-focused prebuilt wheel guidance,
   - Windows strict SYCL mode now reports platform-aware runtime guidance,
   - docs include required driver/runtime reminders and Intel raycasting package note.
+- Windows bootstrap now supports bundled wheel installs (`-UseBundledWheels`) and custom Open3D wheel injection (`-Open3DWheelPath`).
+- Windows bootstrap now supports optional oneAPI SYCL toolchain setup and optional WSL-based Open3D SYCL source builds without touching NVIDIA GPU drivers.
 - Stage 1 post-processing now removes redundant feedrate-only modal commands (`G0/G1 F...`) inside printable windows.
 
 ## V2.2 - 2026-04-13

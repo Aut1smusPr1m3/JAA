@@ -3,6 +3,13 @@ param(
     [string]$VenvPath = ".venv",
     [switch]$InstallOpen3D = $true,
     [switch]$RequireSyclGpu,
+    [switch]$UseBundledWheels,
+    [string]$WheelhousePath = "wheels",
+    [string]$Open3DWheelPath = "",
+    [switch]$SetupSyclToolchain,
+    [switch]$BuildOpen3DSyclWithWsl,
+    [switch]$InstallOneApiBaseToolkit,
+    [string]$WslDistro = "Ubuntu",
     [switch]$InstallDev,
     [string]$ArcWelderPath = "",
     [string]$ArcWelderUrl = "",
@@ -84,6 +91,147 @@ function Ensure-ArcWelder {
     }
 }
 
+function Resolve-RepoScopedPath {
+    param(
+        [string]$RepoRoot,
+        [string]$InputPath
+    )
+
+    if (-not $InputPath) {
+        return ""
+    }
+
+    if ([System.IO.Path]::IsPathRooted($InputPath)) {
+        return $InputPath
+    }
+
+    return Join-Path $RepoRoot $InputPath
+}
+
+function Install-OneApiBaseToolkitIfRequested {
+    param([switch]$InstallToolkit)
+
+    $setvarsPath = Join-Path ${env:ProgramFiles(x86)} "Intel\oneAPI\setvars.bat"
+    if (Test-Path $setvarsPath) {
+        return $setvarsPath
+    }
+
+    if (-not $InstallToolkit) {
+        return $null
+    }
+
+    if (-not (Test-Command "winget")) {
+        throw "oneAPI not found and winget is unavailable. Install Intel oneAPI Base Toolkit manually, then retry."
+    }
+
+    Write-Host "[INFO] Installing Intel oneAPI Base Toolkit via winget"
+    $candidateIds = @(
+        "Intel.oneAPI.BaseToolkit",
+        "Intel.oneAPI.BaseKit"
+    )
+
+    $installed = $false
+    foreach ($id in $candidateIds) {
+        & winget install --id $id -e --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -eq 0) {
+            $installed = $true
+            break
+        }
+    }
+
+    if (-not $installed) {
+        throw "Failed to install Intel oneAPI Base Toolkit via winget. Install it manually and retry."
+    }
+
+    if (-not (Test-Path $setvarsPath)) {
+        throw "oneAPI installation did not expose setvars.bat at expected path: $setvarsPath"
+    }
+
+    return $setvarsPath
+}
+
+function Invoke-OneApiSyclProbe {
+    param([switch]$InstallToolkit)
+
+    $setvarsPath = Install-OneApiBaseToolkitIfRequested -InstallToolkit:$InstallToolkit
+    if (-not $setvarsPath) {
+        Write-Host "[WARN] oneAPI setvars.bat not found; skipping oneAPI SYCL probe"
+        return
+    }
+
+    $syclCommand = "call \"$setvarsPath\" >nul 2>nul && sycl-ls"
+    $output = & cmd.exe /d /c $syclCommand 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to run sycl-ls after oneAPI environment setup. Ensure oneAPI installation is complete."
+    }
+
+    Write-Host "[INFO] oneAPI SYCL probe completed"
+    if ($output -match '(?im)gpu') {
+        Write-Host "[INFO] sycl-ls reports GPU-capable SYCL devices"
+    }
+    else {
+        Write-Host "[WARN] sycl-ls did not report GPU-capable devices. Install/verify your GPU runtime stack."
+    }
+
+    $gpuNames = (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    if ($gpuNames -match 'NVIDIA') {
+        Write-Host "[INFO] NVIDIA GPU detected. This bootstrap does not install or modify NVIDIA GPU drivers."
+    }
+}
+
+function Convert-WindowsPathToWslPath {
+    param([string]$WindowsPath)
+
+    $fullPath = [System.IO.Path]::GetFullPath($WindowsPath)
+    if ($fullPath -match '^([A-Za-z]):\\(.*)$') {
+        $drive = $matches[1].ToLowerInvariant()
+        $rest = $matches[2] -replace '\\', '/'
+        return "/mnt/$drive/$rest"
+    }
+
+    throw "Failed to convert Windows path to WSL path: $WindowsPath"
+}
+
+function Invoke-Open3DSyclBuildViaWsl {
+    param(
+        [string]$RepoRoot,
+        [string]$Distro
+    )
+
+    if (-not (Test-Command "wsl")) {
+        throw "wsl.exe not found. Install WSL (wsl --install -d $Distro) and retry."
+    }
+
+    $repoRootWsl = Convert-WindowsPathToWslPath -WindowsPath $RepoRoot
+    $wslCommand = "set -euo pipefail; cd '$repoRootWsl'; bash scripts/linux/build_open3d_sycl_from_source.sh"
+
+    Write-Host "[INFO] Building Open3D SYCL from source in WSL distro '$Distro'"
+    & wsl.exe -d $Distro -- bash -lc $wslCommand
+    if ($LASTEXITCODE -ne 0) {
+        throw "WSL Open3D SYCL build failed. Check WSL output and required runtime/toolchain dependencies."
+    }
+
+    Write-Host "[INFO] WSL Open3D SYCL build completed"
+}
+
+function Invoke-WindowsSyclToolchainSetup {
+    param(
+        [string]$RepoRoot,
+        [switch]$InstallToolkit,
+        [switch]$BuildWithWsl,
+        [string]$Distro
+    )
+
+    Write-Host "[INFO] Starting Windows SYCL toolchain setup"
+    Write-Host "[INFO] Note: NVIDIA GPU drivers are never modified by this bootstrap."
+
+    Invoke-OneApiSyclProbe -InstallToolkit:$InstallToolkit
+
+    if ($BuildWithWsl) {
+        Invoke-Open3DSyclBuildViaWsl -RepoRoot $RepoRoot -Distro $Distro
+    }
+}
+
 function Invoke-Open3DSyclCheck {
     param(
         [string]$PythonExe,
@@ -149,6 +297,14 @@ Set-Location $repoRoot
 
 Write-Host "[INFO] Repo root: $repoRoot"
 
+if ($SetupSyclToolchain) {
+    Invoke-WindowsSyclToolchainSetup `
+        -RepoRoot $repoRoot `
+        -InstallToolkit:$InstallOneApiBaseToolkit `
+        -BuildWithWsl:$BuildOpen3DSyclWithWsl `
+        -Distro $WslDistro
+}
+
 $pythonLauncher = Resolve-PythonLauncher
 Write-Host "[INFO] Python launcher: $($pythonLauncher.Exe) $($pythonLauncher.Args -join ' ')"
 
@@ -169,14 +325,54 @@ if (-not (Test-Path $venvPython)) {
 
 Write-Host "[INFO] Installing dependencies"
 & $venvPython -m pip install --upgrade pip
-& $venvPython -m pip install -r requirements.txt
 
-if ($InstallOpen3D) {
-    & $venvPython -m pip install -r requirements-optional.txt
+$resolvedWheelhouse = Resolve-RepoScopedPath -RepoRoot $repoRoot -InputPath $WheelhousePath
+$resolvedOpen3DWheel = Resolve-RepoScopedPath -RepoRoot $repoRoot -InputPath $Open3DWheelPath
+
+if ($UseBundledWheels) {
+    if (-not (Test-Path $resolvedWheelhouse)) {
+        throw "Bundled wheelhouse not found: $resolvedWheelhouse"
+    }
+
+    Write-Host "[INFO] Installing from bundled wheelhouse: $resolvedWheelhouse"
+    & $venvPython -m pip install --no-index --find-links $resolvedWheelhouse -r requirements.txt
+
+    if ($InstallOpen3D) {
+        if ($resolvedOpen3DWheel) {
+            if (-not (Test-Path $resolvedOpen3DWheel)) {
+                throw "Open3DWheelPath does not exist: $resolvedOpen3DWheel"
+            }
+            Write-Host "[INFO] Installing Open3D from custom wheel: $resolvedOpen3DWheel"
+            & $venvPython -m pip install $resolvedOpen3DWheel
+        }
+        else {
+            & $venvPython -m pip install --no-index --find-links $resolvedWheelhouse -r requirements-optional.txt
+        }
+    }
+
+    if ($InstallDev) {
+        & $venvPython -m pip install --no-index --find-links $resolvedWheelhouse -r requirements-dev.txt
+    }
 }
+else {
+    & $venvPython -m pip install -r requirements.txt
 
-if ($InstallDev) {
-    & $venvPython -m pip install -r requirements-dev.txt
+    if ($InstallOpen3D) {
+        if ($resolvedOpen3DWheel) {
+            if (-not (Test-Path $resolvedOpen3DWheel)) {
+                throw "Open3DWheelPath does not exist: $resolvedOpen3DWheel"
+            }
+            Write-Host "[INFO] Installing Open3D from custom wheel: $resolvedOpen3DWheel"
+            & $venvPython -m pip install $resolvedOpen3DWheel
+        }
+        else {
+            & $venvPython -m pip install -r requirements-optional.txt
+        }
+    }
+
+    if ($InstallDev) {
+        & $venvPython -m pip install -r requirements-dev.txt
+    }
 }
 
 Ensure-ArcWelder -RepoRoot $repoRoot -SourcePath $ArcWelderPath -DownloadUrl $ArcWelderUrl

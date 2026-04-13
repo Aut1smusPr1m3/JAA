@@ -40,7 +40,13 @@ jobs:
           $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "sha-${{ github.sha }}" }
           $bundleName = "Ultra_Optimizer-Windows-AIO-$version"
           $staging = Join-Path $env:RUNNER_TEMP $bundleName
+          $wheelhouse = Join-Path $staging "wheels"
           New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+
+          python -m pip download --dest $wheelhouse -r requirements.txt
+          python -m pip download --dest $wheelhouse -r requirements-optional.txt
+          python -m pip download --dest $wheelhouse -r requirements-dev.txt
 
           Copy-Item Ultra_Optimizer.py $staging
           Copy-Item ArcWelder.exe $staging -ErrorAction SilentlyContinue
@@ -54,9 +60,10 @@ jobs:
           Copy-Item -Recurse docs $staging
           Copy-Item -Recurse GCodeZAA $staging
           Copy-Item -Recurse scripts/windows $staging/scripts
+          Copy-Item -Recurse scripts/linux $staging/scripts
 
           $installerLauncher = Join-Path $staging "INSTALL_WINDOWS_AIO.bat"
-          Set-Content -Path $installerLauncher -Value "@echo off`r`ncall scripts\bootstrap.bat -InstallDev`r`n"
+          Set-Content -Path $installerLauncher -Value "@echo off`r`ncall scripts\bootstrap.bat -InstallDev -UseBundledWheels`r`n"
 
           $zipPath = Join-Path $env:RUNNER_TEMP "$bundleName.zip"
           if (Test-Path $zipPath) {

@@ -41,6 +41,11 @@ From PowerShell in repository root:
 ./scripts/windows/bootstrap.ps1 -InstallDev
 ```
 
+Offline install from release wheelhouse:
+```powershell
+./scripts/windows/bootstrap.ps1 -InstallDev -UseBundledWheels
+```
+
 Or with Batch launcher:
 ```bat
 scripts\windows\bootstrap.bat -InstallDev
@@ -53,6 +58,12 @@ If `ArcWelder.exe` is missing in repo root, provide one source:
 or
 ```powershell
 ./scripts/windows/bootstrap.ps1 -InstallDev -ArcWelderUrl "https://example.com/ArcWelder.exe"
+```
+
+Windows custom SYCL toolchain/setup path (no NVIDIA driver modifications):
+```powershell
+./scripts/windows/bootstrap.ps1 -SetupSyclToolchain -InstallOneApiBaseToolkit
+./scripts/windows/bootstrap.ps1 -SetupSyclToolchain -BuildOpen3DSyclWithWsl -WslDistro Ubuntu
 ```
 
 ## Optional advanced dependency
