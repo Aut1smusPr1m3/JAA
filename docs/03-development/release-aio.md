@@ -38,3 +38,9 @@ If you create the GitHub release manually, mark it as a prerelease.
 ```bash
 python -m pytest -q -r s
 ```
+
+## License compliance gate
+Before publishing tag-triggered release assets:
+1. Run the checklist in [License compliance checklist](license-compliance.md).
+2. Refresh dependency evidence from [Dependency license inventory](../04-reference/dependency-licenses.md).
+3. Ensure release artifacts include project `LICENSE` and dependency notice references.

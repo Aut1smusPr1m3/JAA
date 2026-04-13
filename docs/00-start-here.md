@@ -3,15 +3,19 @@
 This documentation matches the current repository behavior.
 
 ## Quick paths
+- 5-minute first run: [Quickstart](01-user-guides/quickstart.md)
 - New user setup: [Installation](01-user-guides/installation.md)
 - Windows all-in-one setup: [Windows AIO setup](01-user-guides/windows-aio-setup.md)
 - OrcaSlicer integration: [OrcaSlicer setup](01-user-guides/orcaslicer-integration.md)
 - Troubleshooting: [Troubleshooting](01-user-guides/troubleshooting.md)
 - Internal pipeline details: [Pipeline stages](02-technical-reference/pipeline-stages.md)
+- Architecture map: [Architecture map](02-technical-reference/architecture-map.md)
 - Configuration reference: [Configuration](02-technical-reference/configuration.md)
 - FAQ: [FAQ](04-reference/faq.md)
+- Dependency licenses: [Dependency license inventory](04-reference/dependency-licenses.md)
 - Developer workflow: [Testing](03-development/testing.md)
 - Release packaging: [Windows AIO release](03-development/release-aio.md)
+- Release compliance: [License compliance checklist](03-development/license-compliance.md)
 - Agent automation: [Doc agents](03-development/doc-agents.md)
 
 ## What runs today

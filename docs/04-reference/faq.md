@@ -57,6 +57,12 @@ The full transform is also saved in the sidecar `.meta` file under `stage2_objec
 ## What licence does this project use?
 GNU General Public License v3 (GPL-3.0). See `LICENSE` in the repository root.
 
+## Where can I find third-party license details?
+See [Dependency license inventory](dependency-licenses.md) for tracked direct dependencies and release-time transitive inventory workflow.
+
+## Where is the release compliance checklist?
+See [License compliance checklist](../03-development/license-compliance.md).
+
 ## Where are the detailed setup and diagnostics guides?
 - [Installation](../01-user-guides/installation.md)
 - [Windows AIO setup](../01-user-guides/windows-aio-setup.md)

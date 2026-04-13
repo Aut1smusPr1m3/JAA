@@ -12,6 +12,7 @@ Machine start/end safety:
 
 ## Start here
 - [Documentation entry](docs/00-start-here.md)
+- [5-minute quickstart](docs/01-user-guides/quickstart.md)
 - [Installation](docs/01-user-guides/installation.md)
 - [Windows AIO setup](docs/01-user-guides/windows-aio-setup.md)
 - [OrcaSlicer integration](docs/01-user-guides/orcaslicer-integration.md)
