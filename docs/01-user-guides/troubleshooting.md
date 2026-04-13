@@ -6,6 +6,19 @@ Check:
 2. Stage 2 logs show selected STL model.
 3. GCodeZAA import succeeded in logs.
 
+## Surface mapping looks offset after moving/rotating the model
+Check:
+1. Stage 2 log line includes expected center/rotation and transform source.
+2. If rotation in log is `0.000deg` for a rotated model, provide explicit metadata.
+3. Add G-code hints near the top of the file and re-run:
+
+```gcode
+; ZAA_OBJECT_POSITION: 110.25,128.50
+; ZAA_OBJECT_ROTATION_DEG: 37.5
+```
+
+4. If your slicer emits `EXCLUDE_OBJECT_DEFINE`, verify it includes `CENTER=...` and optional rotation (`ROTATION`, `ROTATION_DEG`, `ANGLE`, or `ANGLE_DEG`).
+
 ## Ironing not behaving as expected
 Check:
 1. OrcaSlicer `Verbose G-code` is enabled so `; FEATURE:` and inline `; ironing` comments are preserved.
@@ -51,6 +64,7 @@ If sidecar validation fails, check:
 1. Stage 2 and Stage 3 actually completed in order.
 2. Output file was not externally modified between stage writes.
 3. Sidecar file (`.meta`) is present and parseable JSON.
+4. `stage2_object_transform` in sidecar matches your intended placement and rotation.
 
 ## Stage 2 is very slow / high CPU
 Use throughput controls:

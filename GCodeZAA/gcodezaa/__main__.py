@@ -16,8 +16,13 @@ def main():
 
     with open(args.input_gcode, "r", encoding="utf-8") as f:
         if args.position is not None and args.name is not None:
-            x, y = args.position.split(",", maxsplit=1)
-            plate_model = (args.name, float(x), float(y))
+            parts = [p.strip() for p in args.position.split(",") if p.strip()]
+            if len(parts) not in (2, 3):
+                raise ValueError("--position must be 'x,y' or 'x,y,rotation_deg'")
+
+            x, y = float(parts[0]), float(parts[1])
+            rotation = float(parts[2]) if len(parts) == 3 else 0.0
+            plate_model = (args.name, x, y, rotation)
         else:
             plate_model = None
         result = process_gcode(f.readlines(), args.models, plate_model)
