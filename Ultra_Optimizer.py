@@ -10,6 +10,8 @@ import subprocess
 import logging
 import json
 import hashlib
+import shlex
+from dataclasses import dataclass, replace
 
 # --- LOGGING KONFIGURATION (MUST BE FIRST!) ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +88,9 @@ PRINT_OBJECT_START_RE = re.compile(r'^\s*;\s*printing object\b', re.IGNORECASE)
 PRINT_OBJECT_STOP_RE = re.compile(r'^\s*;\s*stop printing object\b', re.IGNORECASE)
 EXECUTABLE_BLOCK_START_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_START\b', re.IGNORECASE)
 EXECUTABLE_BLOCK_END_RE = re.compile(r'^\s*;\s*EXECUTABLE_BLOCK_END\b', re.IGNORECASE)
+EXCLUDE_OBJECT_START_RE = re.compile(r'^\s*EXCLUDE_OBJECT_START\b', re.IGNORECASE)
+EXCLUDE_OBJECT_END_RE = re.compile(r'^\s*EXCLUDE_OBJECT_END\b', re.IGNORECASE)
+M486_RE = re.compile(r'^\s*M486\b', re.IGNORECASE)
 COMMENT_FEATURE_RE = re.compile(r'^\s*(?:TYPE|FEATURE)\s*:\s*(.+?)\s*$', re.IGNORECASE)
 INLINE_FEATURE_PATTERNS = [
     (re.compile(r'^\s*ironing\b', re.IGNORECASE), 'ironing'),
@@ -105,6 +110,145 @@ OBJECT_ROTATION_HINT_RE = re.compile(
     r"([-+]?\d*\.?\d+)\s*$",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class Stage2ObjectTransform:
+    center_x: float
+    center_y: float
+    rotation_deg: float
+    source: str
+    window_start: int
+    window_end: int
+    inferred_bounds: dict | None
+    metadata_family: str
+    confidence_score: float | None = None
+    ambiguity_markers: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def as_metadata_dict(self):
+        return {
+            "center_x": float(self.center_x),
+            "center_y": float(self.center_y),
+            "rotation_deg": float(self.rotation_deg),
+            "source": self.source,
+            "window_start": int(self.window_start),
+            "window_end": int(self.window_end),
+            "inferred_bounds": self.inferred_bounds,
+            "metadata_family": self.metadata_family,
+            "confidence_score": self.confidence_score,
+            "ambiguity_markers": list(self.ambiguity_markers),
+            "notes": list(self.notes),
+        }
+
+    def as_plate_object(self, model_name):
+        return (model_name, self.center_x, self.center_y, self.rotation_deg)
+
+    def summary(self):
+        confidence = "unknown" if self.confidence_score is None else f"{self.confidence_score:.3f}"
+        return (
+            f"center=({self.center_x:.3f}, {self.center_y:.3f}) "
+            f"rotation={self.rotation_deg:.3f}deg source={self.source} "
+            f"family={self.metadata_family} confidence={confidence} "
+            f"window={self.window_start}-{self.window_end}"
+        )
+
+    def get(self, key, default=None):
+        return self.as_metadata_dict().get(key, default)
+
+    def __getitem__(self, key):
+        return self.as_metadata_dict()[key]
+
+
+@dataclass(frozen=True)
+class Stage2ObjectSpan:
+    start: int | None
+    end: int | None
+    source: str
+    notes: tuple[str, ...] = ()
+
+    def as_metadata_dict(self):
+        return {
+            "start": self.start,
+            "end": self.end,
+            "source": self.source,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class Stage2ObjectMetadata:
+    name: str
+    source_family: str
+    center_x: float | None = None
+    center_y: float | None = None
+    rotation_deg: float | None = None
+    polygon: tuple[tuple[float, float], ...] | None = None
+    window_start: int | None = None
+    window_end: int | None = None
+    spans: tuple[Stage2ObjectSpan, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def as_metadata_dict(self):
+        return {
+            "name": self.name,
+            "source_family": self.source_family,
+            "center_x": self.center_x,
+            "center_y": self.center_y,
+            "rotation_deg": self.rotation_deg,
+            "polygon": [list(point) for point in self.polygon] if self.polygon is not None else None,
+            "window_start": self.window_start,
+            "window_end": self.window_end,
+            "spans": [span.as_metadata_dict() for span in self.spans],
+            "span_count": len(self.spans),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class Stage2RankedObjectCandidate:
+    name: str
+    source_family: str
+    center_x: float
+    center_y: float
+    rotation_deg: float | None
+    center_source: str
+    inferred_bounds: dict | None
+    polygon_bounds: dict | None
+    score: float
+    exact_window_match: bool
+    overlapping_span_count: int
+    span_count: int
+    complete_span_count: int
+    incomplete_span_count: int
+    window_start: int | None
+    window_end: int | None
+    score_details: tuple[str, ...] = ()
+    ambiguity_markers: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def as_metadata_dict(self):
+        return {
+            "name": self.name,
+            "source_family": self.source_family,
+            "center_x": float(self.center_x),
+            "center_y": float(self.center_y),
+            "rotation_deg": self.rotation_deg,
+            "center_source": self.center_source,
+            "inferred_bounds": self.inferred_bounds,
+            "polygon_bounds": self.polygon_bounds,
+            "score": float(self.score),
+            "exact_window_match": self.exact_window_match,
+            "overlapping_span_count": self.overlapping_span_count,
+            "span_count": self.span_count,
+            "complete_span_count": self.complete_span_count,
+            "incomplete_span_count": self.incomplete_span_count,
+            "window_start": self.window_start,
+            "window_end": self.window_end,
+            "score_details": list(self.score_details),
+            "ambiguity_markers": list(self.ambiguity_markers),
+            "notes": list(self.notes),
+        }
 
 # --- G2/G3 ARC COMMAND SUPPORT ---
 ENABLE_ARC_ANALYSIS = True              # Analyze G2/G3 commands
@@ -399,13 +543,18 @@ def backup_gcode(gcode_file):
         logging.warning(f"[BACKUP] Failed to create backup: {e}")
         return None
 
-def select_primary_stl_model(model_dir):
-    """Return the first STL filename in sorted order from model_dir, or None."""
+def list_stl_models(model_dir):
+    """Return sorted STL filenames from model_dir."""
     if not os.path.isdir(model_dir):
-        return None
-    stl_files = sorted(
+        return []
+    return sorted(
         f for f in os.listdir(model_dir) if f.lower().endswith('.stl')
     )
+
+
+def select_primary_stl_model(model_dir):
+    """Return the first STL filename in sorted order from model_dir, or None."""
+    stl_files = list_stl_models(model_dir)
     if not stl_files:
         return None
     return stl_files[0]
@@ -514,7 +663,11 @@ def _parse_exclude_object_define_args(line):
 
     payload = line.removeprefix("EXCLUDE_OBJECT_DEFINE").strip()
     args = {}
-    for token in payload.split():
+    try:
+        tokens = shlex.split(payload)
+    except ValueError:
+        tokens = payload.split()
+    for token in tokens:
         if "=" not in token:
             continue
         key, value = token.split("=", 1)
@@ -522,8 +675,271 @@ def _parse_exclude_object_define_args(line):
     return args
 
 
+def _parse_named_command_args(line, command_name):
+    stripped = line.split(";", 1)[0].strip()
+    if not stripped.upper().startswith(command_name.upper()):
+        return {}
+
+    payload = stripped[len(command_name):].strip()
+    args = {}
+    try:
+        tokens = shlex.split(payload)
+    except ValueError:
+        tokens = payload.split()
+
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        args[key.strip().upper()] = value.strip()
+    return args
+
+
+def _parse_xy_pair(value):
+    if not value:
+        return None
+    try:
+        x_str, y_str = value.split(",", 1)
+        return float(x_str), float(y_str)
+    except ValueError:
+        return None
+
+
+def _parse_polygon_points(value):
+    if not value:
+        return None
+    try:
+        raw_points = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(raw_points, list):
+        return None
+
+    normalized = []
+    for point in raw_points:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            return None
+        try:
+            normalized.append((float(point[0]), float(point[1])))
+        except (TypeError, ValueError):
+            return None
+    return tuple(normalized)
+
+
+def _parse_m486_command(line):
+    stripped = line.split(";", 1)[0].strip()
+    if not M486_RE.match(stripped):
+        return None
+
+    payload = stripped[len("M486"):].strip()
+    try:
+        tokens = shlex.split(payload)
+    except ValueError:
+        tokens = payload.split()
+
+    s_value = None
+    a_value = None
+    for token in tokens:
+        if len(token) < 2:
+            continue
+        prefix = token[0].upper()
+        value = token[1:]
+        if prefix == "S":
+            try:
+                s_value = int(value)
+            except ValueError:
+                return None
+        elif prefix == "A":
+            a_value = value
+
+    if s_value is None:
+        return None
+    return {"S": s_value, "A": a_value}
+
+
+def _rotation_from_object_args(args):
+    for key in ("ROTATION", "ROTATION_DEG", "ANGLE", "ANGLE_DEG"):
+        if key in args:
+            try:
+                return float(args[key])
+            except ValueError:
+                return None
+    return None
+
+
+def _merge_stage2_notes(*note_groups):
+    merged = []
+    for group in note_groups:
+        for note in group or ():
+            if note not in merged:
+                merged.append(note)
+    return tuple(merged)
+
+
+def _stage2_span_bounds(spans):
+    starts = [span.start for span in spans if span.start is not None]
+    ends = [span.end for span in spans if span.end is not None]
+    return (
+        min(starts) if starts else None,
+        max(ends) if ends else None,
+    )
+
+
+def _stage2_metadata_with_spans(metadata, spans, extra_notes=()):
+    window_start, window_end = _stage2_span_bounds(spans)
+    span_notes = []
+    if any(span.start is None or span.end is None for span in spans):
+        span_notes.append("span-incomplete")
+    return replace(
+        metadata,
+        window_start=window_start,
+        window_end=window_end,
+        spans=tuple(spans),
+        notes=_merge_stage2_notes(metadata.notes, span_notes, extra_notes),
+    )
+
+
+def _stage2_open_span(metadata, start, source):
+    spans = list(metadata.spans)
+    spans.append(Stage2ObjectSpan(start=start, end=None, source=source))
+    return _stage2_metadata_with_spans(metadata, spans)
+
+
+def _stage2_close_span(metadata, end, source):
+    spans = list(metadata.spans)
+    for idx in range(len(spans) - 1, -1, -1):
+        span = spans[idx]
+        if span.source == source and span.end is None:
+            spans[idx] = replace(span, end=end)
+            return _stage2_metadata_with_spans(metadata, spans)
+
+    spans.append(
+        Stage2ObjectSpan(
+            start=None,
+            end=end,
+            source=source,
+            notes=("orphan-end",),
+        )
+    )
+    return _stage2_metadata_with_spans(metadata, spans, extra_notes=("orphan-end",))
+
+
+def extract_stage2_object_metadata(gcode_lines):
+    """Collect normalized object metadata records for future multi-object transform handling."""
+    normalized = {}
+    ordered_names = []
+
+    def _remember(metadata):
+        normalized[metadata.name] = metadata
+        if metadata.name not in ordered_names:
+            ordered_names.append(metadata.name)
+
+    for idx, line in enumerate(gcode_lines):
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("EXCLUDE_OBJECT_DEFINE"):
+            args = _parse_exclude_object_define_args(stripped)
+            if args.get("RESET") == "1":
+                normalized.clear()
+                ordered_names.clear()
+                continue
+
+            name = args.get("NAME")
+            if not name:
+                continue
+
+            center = _parse_xy_pair(args.get("CENTER"))
+            polygon = _parse_polygon_points(args.get("POLYGON") or args.get("POLYGONS"))
+            rotation_deg = _rotation_from_object_args(args)
+            existing = normalized.get(name)
+
+            notes = list(existing.notes if existing else ())
+            if polygon is None:
+                notes.append("polygon-missing-or-invalid")
+
+            _remember(
+                Stage2ObjectMetadata(
+                    name=name,
+                    source_family="exclude-object",
+                    center_x=center[0] if center else (existing.center_x if existing else None),
+                    center_y=center[1] if center else (existing.center_y if existing else None),
+                    rotation_deg=rotation_deg if rotation_deg is not None else (existing.rotation_deg if existing else None),
+                    polygon=polygon if polygon is not None else (existing.polygon if existing else None),
+                    window_start=existing.window_start if existing else None,
+                    window_end=existing.window_end if existing else None,
+                    spans=existing.spans if existing else (),
+                    notes=tuple(notes),
+                )
+            )
+            continue
+
+        if EXCLUDE_OBJECT_START_RE.match(stripped):
+            args = _parse_named_command_args(stripped, "EXCLUDE_OBJECT_START")
+            name = args.get("NAME")
+            if not name:
+                continue
+            existing = normalized.get(name) or Stage2ObjectMetadata(name=name, source_family="exclude-object")
+            _remember(_stage2_open_span(existing, idx, "exclude-object"))
+            continue
+
+        if EXCLUDE_OBJECT_END_RE.match(stripped):
+            args = _parse_named_command_args(stripped, "EXCLUDE_OBJECT_END")
+            name = args.get("NAME")
+            if not name:
+                continue
+            existing = normalized.get(name) or Stage2ObjectMetadata(name=name, source_family="exclude-object")
+            _remember(_stage2_close_span(existing, idx, "exclude-object"))
+
+    m486_names = {}
+    current_m486_name = None
+    for idx, line in enumerate(gcode_lines):
+        parsed = _parse_m486_command(line)
+        if parsed is None:
+            continue
+
+        marker_index = parsed["S"]
+        marker_name = parsed.get("A")
+
+        if marker_name is not None and marker_index >= 0:
+            resolved_name = marker_name
+            m486_names[marker_index] = resolved_name
+            existing = normalized.get(resolved_name)
+            _remember(
+                Stage2ObjectMetadata(
+                    name=resolved_name,
+                    source_family="m486",
+                    center_x=existing.center_x if existing else None,
+                    center_y=existing.center_y if existing else None,
+                    rotation_deg=existing.rotation_deg if existing else None,
+                    polygon=existing.polygon if existing else None,
+                    window_start=existing.window_start if existing else None,
+                    window_end=existing.window_end if existing else None,
+                    spans=existing.spans if existing else (),
+                    notes=(existing.notes if existing else ()) + ("m486-definition",),
+                )
+            )
+            continue
+
+        if marker_index >= 0:
+            resolved_name = m486_names.get(marker_index, f"m486_object_{marker_index}")
+            current_m486_name = resolved_name
+            existing = normalized.get(resolved_name) or Stage2ObjectMetadata(name=resolved_name, source_family="m486")
+            _remember(_stage2_open_span(existing, idx, "m486"))
+            continue
+
+        if marker_index == -1 and current_m486_name is not None:
+            existing = normalized.get(current_m486_name) or Stage2ObjectMetadata(name=current_m486_name, source_family="m486")
+            _remember(_stage2_close_span(existing, idx, "m486"))
+            current_m486_name = None
+
+    return [normalized[name] for name in ordered_names]
+
+
 def _extract_transform_hints_from_gcode(gcode_lines):
-    """Extract optional position/rotation hints from comments or EXCLUDE_OBJECT_DEFINE lines."""
+    """Extract optional explicit JAA position/rotation hints from comments."""
     hint_x = None
     hint_y = None
     hint_rotation = None
@@ -544,37 +960,52 @@ def _extract_transform_hints_from_gcode(gcode_lines):
                 if source is None:
                     source = "comment-hint"
 
-        stripped = line.split(";", 1)[0].strip()
-        if not stripped.startswith("EXCLUDE_OBJECT_DEFINE"):
-            continue
-
-        args = _parse_exclude_object_define_args(stripped)
-        center = args.get("CENTER")
-        if center and (hint_x is None or hint_y is None):
-            try:
-                x_str, y_str = center.split(",", 1)
-                hint_x = float(x_str)
-                hint_y = float(y_str)
-                source = "exclude-object"
-            except ValueError:
-                pass
-
-        if hint_rotation is None:
-            for key in ("ROTATION", "ROTATION_DEG", "ANGLE", "ANGLE_DEG"):
-                if key in args:
-                    try:
-                        hint_rotation = float(args[key])
-                        if source is None:
-                            source = "exclude-object"
-                    except ValueError:
-                        pass
-                    break
-
         if hint_x is not None and hint_y is not None and hint_rotation is not None:
             break
 
     return hint_x, hint_y, hint_rotation, source
 
+
+def _stage2_metadata_family_from_source(source):
+    if source in ("comment-hint", "exclude-object", "m486"):
+        return source
+    if source == "inferred-window-bounds":
+        return "inferred-window-bounds"
+    if source == "default-origin":
+        return "default-origin"
+    return "unknown"
+
+
+def _polygon_centroid(points):
+    if not points or len(points) < 3:
+        return None
+
+    signed_area_twice = 0.0
+    centroid_x = 0.0
+    centroid_y = 0.0
+    loop_points = list(points) + [points[0]]
+
+    for current, nxt in zip(loop_points, loop_points[1:]):
+        cross = (current[0] * nxt[1]) - (nxt[0] * current[1])
+        signed_area_twice += cross
+        centroid_x += (current[0] + nxt[0]) * cross
+        centroid_y += (current[1] + nxt[1]) * cross
+
+    if abs(signed_area_twice) < 1e-9:
+        avg_x = sum(point[0] for point in points) / len(points)
+        avg_y = sum(point[1] for point in points) / len(points)
+        return {
+            "center_x": float(avg_x),
+            "center_y": float(avg_y),
+            "notes": ("center-from-object-polygon", "polygon-centroid-degenerate"),
+        }
+
+    area = signed_area_twice / 2.0
+    return {
+        "center_x": float(centroid_x / (6.0 * area)),
+        "center_y": float(centroid_y / (6.0 * area)),
+        "notes": ("center-from-object-polygon",),
+    }
 
 def _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end):
     """Infer XY center from printable-window motion commands while respecting G90/G91/G92 state."""
@@ -612,6 +1043,22 @@ def _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end):
             if has_xy:
                 current_x = nx if nx is not None else current_x
                 current_y = ny if ny is not None else current_y
+            continue
+
+        token = stripped.split(" ", 1)[0]
+        if token not in ("G0", "G1", "G2", "G3"):
+            continue
+
+        has_xy, nx, ny, _nz = safe_parse_g1(stripped)
+        if not has_xy:
+            continue
+
+        if relative_positioning:
+            current_x += nx if nx is not None else 0.0
+            current_y += ny if ny is not None else 0.0
+        else:
+            current_x = nx if nx is not None else current_x
+            current_y = ny if ny is not None else current_y
 
     for idx in range(process_start, min(process_end + 1, len(gcode_lines))):
         stripped = gcode_lines[idx].split(";", 1)[0].strip()
@@ -667,34 +1114,555 @@ def _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end):
     }
 
 
-def resolve_stage2_object_transform(gcode_lines):
+def _aggregate_bounds_dicts(bounds_dicts):
+    if not bounds_dicts:
+        return None
+    min_x = min(bounds["min_x"] for bounds in bounds_dicts)
+    max_x = max(bounds["max_x"] for bounds in bounds_dicts)
+    min_y = min(bounds["min_y"] for bounds in bounds_dicts)
+    max_y = max(bounds["max_y"] for bounds in bounds_dicts)
+    return {
+        "min_x": min_x,
+        "max_x": max_x,
+        "min_y": min_y,
+        "max_y": max_y,
+    }
+
+
+def _polygon_bounds(points):
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return {
+        "min_x": float(min(xs)),
+        "max_x": float(max(xs)),
+        "min_y": float(min(ys)),
+        "max_y": float(max(ys)),
+    }
+
+
+def _infer_xy_center_from_object_spans(gcode_lines, spans):
+    complete_bounds = []
+    complete_span_count = 0
+    incomplete_span_count = 0
+
+    for span in spans:
+        if span.start is None or span.end is None:
+            incomplete_span_count += 1
+            continue
+        inferred = _infer_xy_center_from_gcode_window(gcode_lines, span.start, span.end)
+        if inferred is None:
+            incomplete_span_count += 1
+            continue
+        complete_span_count += 1
+        complete_bounds.append(inferred["bounds"])
+
+    if not complete_bounds:
+        return None
+
+    aggregated_bounds = _aggregate_bounds_dicts(complete_bounds)
+    return {
+        "center_x": (aggregated_bounds["min_x"] + aggregated_bounds["max_x"]) / 2.0,
+        "center_y": (aggregated_bounds["min_y"] + aggregated_bounds["max_y"]) / 2.0,
+        "inferred_bounds": aggregated_bounds,
+        "complete_span_count": complete_span_count,
+        "incomplete_span_count": incomplete_span_count,
+        "span_count": len(spans),
+        "notes": (
+            ("center-from-object-spans",) if complete_span_count > 1 else ("center-from-object-window",)
+        ) + (("object-spans-incomplete",) if incomplete_span_count else ()),
+    }
+
+
+def _validate_polygon_motion_consistency(candidate, gcode_lines, tolerance_mm=5.0):
+    polygon_bounds = _polygon_bounds(candidate.polygon)
+    if polygon_bounds is None or not candidate.spans:
+        return True, (), polygon_bounds, None
+
+    inferred = _infer_xy_center_from_object_spans(gcode_lines, candidate.spans)
+    if inferred is None:
+        return True, (), polygon_bounds, None
+
+    motion_bounds = inferred["inferred_bounds"]
+    violations = []
+    if motion_bounds["min_x"] < polygon_bounds["min_x"] - tolerance_mm:
+        violations.append("motion-left-of-polygon")
+    if motion_bounds["max_x"] > polygon_bounds["max_x"] + tolerance_mm:
+        violations.append("motion-right-of-polygon")
+    if motion_bounds["min_y"] < polygon_bounds["min_y"] - tolerance_mm:
+        violations.append("motion-below-polygon")
+    if motion_bounds["max_y"] > polygon_bounds["max_y"] + tolerance_mm:
+        violations.append("motion-above-polygon")
+
+    if violations:
+        return False, tuple(["polygon-motion-mismatch", *violations]), polygon_bounds, motion_bounds
+    return True, (), polygon_bounds, motion_bounds
+
+
+def _materialize_stage2_object_metadata_candidate(candidate, gcode_lines):
+    if candidate.center_x is not None and candidate.center_y is not None:
+        return {
+            "center_x": float(candidate.center_x),
+            "center_y": float(candidate.center_y),
+            "center_source": "declared-center",
+            "inferred_bounds": None,
+            "span_count": len(candidate.spans),
+            "complete_span_count": sum(1 for span in candidate.spans if span.start is not None and span.end is not None),
+            "incomplete_span_count": sum(1 for span in candidate.spans if span.start is None or span.end is None),
+            "notes": (),
+        }
+
+    if candidate.polygon is not None:
+        centroid = _polygon_centroid(candidate.polygon)
+        if centroid is not None:
+            return {
+                "center_x": centroid["center_x"],
+                "center_y": centroid["center_y"],
+                "center_source": "polygon-centroid",
+                "inferred_bounds": None,
+                "span_count": len(candidate.spans),
+                "complete_span_count": sum(1 for span in candidate.spans if span.start is not None and span.end is not None),
+                "incomplete_span_count": sum(1 for span in candidate.spans if span.start is None or span.end is None),
+                "notes": tuple(centroid["notes"]),
+            }
+
+    if not candidate.spans:
+        return None
+
+    inferred = _infer_xy_center_from_object_spans(gcode_lines, candidate.spans)
+    if inferred is None:
+        return None
+
+    return {
+        "center_x": float(inferred["center_x"]),
+        "center_y": float(inferred["center_y"]),
+        "center_source": "object-spans" if inferred["complete_span_count"] > 1 else "object-window",
+        "inferred_bounds": inferred["inferred_bounds"],
+        "span_count": inferred["span_count"],
+        "complete_span_count": inferred["complete_span_count"],
+        "incomplete_span_count": inferred["incomplete_span_count"],
+        "notes": tuple(inferred["notes"]),
+    }
+
+
+def _candidate_overlap_stats(candidate, process_start, process_end):
+    exact_match = False
+    overlapping_span_count = 0
+    for span in candidate.spans:
+        if span.start is None or span.end is None:
+            continue
+        if span.start == process_start and span.end == process_end:
+            exact_match = True
+        if span.end >= process_start and span.start <= process_end:
+            overlapping_span_count += 1
+    return exact_match, overlapping_span_count
+
+
+def _score_stage2_object_metadata_candidate(candidate, materialized, process_start, process_end, gcode_lines):
+    base_scores = {
+        "declared-center": 1.00,
+        "polygon-centroid": 0.92,
+        "object-spans": 0.85,
+        "object-window": 0.80,
+    }
+    center_source = materialized["center_source"]
+    score = base_scores.get(center_source, 0.50)
+    score_details = [f"center-source:{center_source}", f"base:{score:.2f}"]
+    ambiguity_markers = []
+    polygon_bounds = _polygon_bounds(candidate.polygon)
+
+    exact_window_match, overlapping_span_count = _candidate_overlap_stats(candidate, process_start, process_end)
+    if exact_window_match:
+        score += 0.05
+        score_details.append("bonus:exact-window-match=0.05")
+    elif overlapping_span_count > 0:
+        overlap_bonus = min(0.04, 0.01 * overlapping_span_count)
+        score += overlap_bonus
+        score_details.append(f"bonus:overlapping-span-count={overlapping_span_count}")
+
+    complete_span_count = materialized["complete_span_count"]
+    incomplete_span_count = materialized["incomplete_span_count"]
+    if complete_span_count > 1:
+        span_bonus = min(0.08, 0.02 * (complete_span_count - 1))
+        score += span_bonus
+        score_details.append(f"bonus:repeated-spans={span_bonus:.2f}")
+    if incomplete_span_count:
+        incomplete_penalty = min(0.20, 0.05 * incomplete_span_count)
+        score -= incomplete_penalty
+        score_details.append(f"penalty:incomplete-spans={incomplete_penalty:.2f}")
+        ambiguity_markers.append("incomplete-spans")
+
+    polygon_valid, polygon_notes, polygon_bounds, _motion_bounds = _validate_polygon_motion_consistency(
+        candidate,
+        gcode_lines,
+    )
+    if not polygon_valid:
+        polygon_penalty = 0.15
+        score -= polygon_penalty
+        score_details.append(f"penalty:polygon-motion-mismatch={polygon_penalty:.2f}")
+        ambiguity_markers.append("polygon-motion-mismatch")
+
+    score = max(0.0, min(1.0, score))
+    return Stage2RankedObjectCandidate(
+        name=candidate.name,
+        source_family=candidate.source_family,
+        center_x=float(materialized["center_x"]),
+        center_y=float(materialized["center_y"]),
+        rotation_deg=float(candidate.rotation_deg) if candidate.rotation_deg is not None else None,
+        center_source=center_source,
+        inferred_bounds=materialized["inferred_bounds"],
+        polygon_bounds=polygon_bounds,
+        score=score,
+        exact_window_match=exact_window_match,
+        overlapping_span_count=overlapping_span_count,
+        span_count=materialized["span_count"],
+        complete_span_count=complete_span_count,
+        incomplete_span_count=incomplete_span_count,
+        window_start=candidate.window_start,
+        window_end=candidate.window_end,
+        score_details=tuple(score_details),
+        ambiguity_markers=tuple(ambiguity_markers),
+        notes=tuple(materialized["notes"] + polygon_notes),
+    )
+
+
+def _rank_stage2_object_metadata_candidates(gcode_lines, process_start, process_end):
+    ranked_candidates = []
+    unresolved_candidates = []
+
+    for candidate in extract_stage2_object_metadata(gcode_lines):
+        materialized = _materialize_stage2_object_metadata_candidate(candidate, gcode_lines)
+        if materialized is None:
+            unresolved_candidates.append(candidate.name)
+            continue
+        ranked_candidates.append(
+            _score_stage2_object_metadata_candidate(candidate, materialized, process_start, process_end, gcode_lines)
+        )
+
+    ranked_candidates.sort(key=lambda candidate: (-candidate.score, candidate.name))
+    return ranked_candidates, unresolved_candidates
+
+
+def _select_stage2_object_metadata_candidate(gcode_lines, process_start, process_end, ranked_candidates=None):
+    if ranked_candidates is None:
+        ranked_candidates, unresolved_candidates = _rank_stage2_object_metadata_candidates(
+            gcode_lines,
+            process_start,
+            process_end,
+        )
+    else:
+        unresolved_candidates = []
+
+    if not ranked_candidates:
+        if unresolved_candidates:
+            return None, ("object-metadata-incomplete",)
+        return None, ()
+
+    winner = ranked_candidates[0]
+    if len(ranked_candidates) == 1:
+        return winner, (f"selected-object:{winner.name}",) + winner.notes
+
+    runner_up = ranked_candidates[1]
+    score_margin = winner.score - runner_up.score
+    if winner.score >= 0.75 and score_margin >= 0.10:
+        return winner, (f"selected-object:{winner.name}",) + winner.notes
+
+    return None, (
+        "object-metadata-ambiguous",
+        f"top-score:{winner.score:.3f}",
+        f"score-margin:{score_margin:.3f}",
+    )
+
+
+def _candidate_identity_root(name):
+    root = os.path.basename(str(name)).lower().strip()
+    root = re.sub(r"\.stl(?:_[0-9]+.*)?$", "", root)
+    root = re.sub(r"\.stl$", "", root)
+    root = re.sub(r"(?:[_-]copy[_-]?\d+)$", "", root)
+    root = re.sub(r"[_-]\d+$", "", root)
+    root = re.sub(r"[^a-z0-9]+", "", root)
+    return root
+
+
+def _resolve_stage2_candidate_model(candidate_name, available_models, selected_model):
+    if not available_models:
+        return selected_model, "selected-model-fallback", ()
+
+    if len(available_models) == 1:
+        return available_models[0], "single-model-only", ()
+
+    candidate_name_lower = str(candidate_name).lower()
+    candidate_root = _candidate_identity_root(candidate_name)
+    model_roots = {model: _candidate_identity_root(model) for model in available_models}
+
+    matching_strategies = (
+        (
+            "exact-file-name",
+            [model for model in available_models if model.lower() == candidate_name_lower],
+        ),
+        (
+            "filename-prefix",
+            [
+                model
+                for model in available_models
+                if candidate_name_lower.startswith(model.lower() + "_")
+                or candidate_name_lower.startswith(model.lower() + "-")
+            ],
+        ),
+        (
+            "identity-root",
+            [model for model, model_root in model_roots.items() if model_root == candidate_root],
+        ),
+        (
+            "fuzzy-root",
+            [
+                model
+                for model, model_root in model_roots.items()
+                if candidate_root and candidate_root in model_root
+            ],
+        ),
+        (
+            "contained-root",
+            [
+                model
+                for model, model_root in model_roots.items()
+                if candidate_root and model_root in candidate_root
+            ],
+        ),
+    )
+
+    for strategy, matches in matching_strategies:
+        unique_matches = sorted(set(matches))
+        if len(unique_matches) == 1:
+            return unique_matches[0], strategy, ()
+        if len(unique_matches) > 1:
+            return None, strategy, tuple(unique_matches)
+
+    return None, "no-match", ()
+
+
+def _bounds_too_close(bounds_a, bounds_b, clearance_mm=5.0):
+    x_separated = (
+        bounds_a["max_x"] + clearance_mm <= bounds_b["min_x"]
+        or bounds_b["max_x"] + clearance_mm <= bounds_a["min_x"]
+    )
+    y_separated = (
+        bounds_a["max_y"] + clearance_mm <= bounds_b["min_y"]
+        or bounds_b["max_y"] + clearance_mm <= bounds_a["min_y"]
+    )
+    return not (x_separated or y_separated)
+
+
+def _candidate_effective_bounds(candidate):
+    return candidate.polygon_bounds or candidate.inferred_bounds
+
+
+def detect_stage2_layout_collisions(ranked_candidates, clearance_mm=5.0):
+    collisions = {candidate.name: [] for candidate in ranked_candidates}
+    unresolved_bounds = []
+
+    for idx, candidate in enumerate(ranked_candidates):
+        bounds = _candidate_effective_bounds(candidate)
+        if bounds is None:
+            unresolved_bounds.append(candidate.name)
+            continue
+        for other in ranked_candidates[idx + 1:]:
+            other_bounds = _candidate_effective_bounds(other)
+            if other_bounds is None:
+                continue
+            if _bounds_too_close(bounds, other_bounds, clearance_mm=clearance_mm):
+                collisions[candidate.name].append(other.name)
+                collisions[other.name].append(candidate.name)
+
+    return collisions, unresolved_bounds
+
+
+def _candidate_windows_overlap(candidate_a, candidate_b):
+    if (
+        candidate_a.window_start is None
+        or candidate_a.window_end is None
+        or candidate_b.window_start is None
+        or candidate_b.window_end is None
+    ):
+        return True
+    return not (
+        candidate_a.window_end < candidate_b.window_start
+        or candidate_b.window_end < candidate_a.window_start
+    )
+
+
+def resolve_stage2_plate_objects(selected_model, stage2_transform, ranked_candidates, available_models=None):
+    default_plate_object = [stage2_transform.as_plate_object(selected_model)]
+    validation_notes = []
+    available_models = list(available_models or ([selected_model] if selected_model else []))
+
+    if stage2_transform.source in ("comment-hint", "inferred-window-bounds", "default-origin"):
+        validation_notes.append("single-object-handoff:source-not-batchable")
+        return default_plate_object, validation_notes, "single-plate-object"
+
+    eligible_candidates = [
+        candidate
+        for candidate in ranked_candidates
+        if candidate.score >= 0.75 and "polygon-motion-mismatch" not in candidate.ambiguity_markers
+    ]
+    if len(eligible_candidates) < 2:
+        validation_notes.append("single-object-handoff:insufficient-batchable-candidates")
+        return default_plate_object, validation_notes, "single-plate-object"
+
+    sorted_candidates = sorted(
+        eligible_candidates,
+        key=lambda candidate: (
+            candidate.window_start if candidate.window_start is not None else sys.maxsize,
+            candidate.name,
+        ),
+    )
+    for left, right in zip(sorted_candidates, sorted_candidates[1:]):
+        if _candidate_windows_overlap(left, right):
+            validation_notes.append(f"single-object-handoff:overlapping-windows:{left.name}:{right.name}")
+            return default_plate_object, validation_notes, "single-plate-object"
+
+    collisions, unresolved_bounds = detect_stage2_layout_collisions(sorted_candidates)
+    if unresolved_bounds:
+        validation_notes.append(
+            "single-object-handoff:collision-bounds-unavailable:" + ",".join(sorted(unresolved_bounds))
+        )
+        return default_plate_object, validation_notes, "single-plate-object"
+
+    collision_notes = []
+    for candidate in sorted_candidates:
+        collided_with = collisions.get(candidate.name) or []
+        if collided_with:
+            collision_notes.append(f"{candidate.name}:{','.join(sorted(collided_with))}")
+    if collision_notes:
+        validation_notes.append("single-object-handoff:collisions-detected:" + ";".join(collision_notes))
+        return default_plate_object, validation_notes, "single-plate-object"
+
+    resolved_plate_objects = []
+    if len(available_models) <= 1:
+        identity_roots = {_candidate_identity_root(candidate.name) for candidate in sorted_candidates}
+        if len(identity_roots) != 1:
+            validation_notes.append("single-object-handoff:mixed-object-identities")
+            return default_plate_object, validation_notes, "single-plate-object"
+
+        resolved_model_name = available_models[0] if available_models else selected_model
+        resolved_plate_objects = [
+            (
+                candidate.name,
+                resolved_model_name,
+                candidate.center_x,
+                candidate.center_y,
+                candidate.rotation_deg or 0.0,
+            )
+            for candidate in sorted_candidates
+        ]
+    else:
+        for candidate in sorted_candidates:
+            resolved_model_name, resolution_strategy, ambiguous_matches = _resolve_stage2_candidate_model(
+                candidate.name,
+                available_models,
+                selected_model,
+            )
+            if resolved_model_name is None:
+                if ambiguous_matches:
+                    validation_notes.append(
+                        "single-object-handoff:ambiguous-model-match:"
+                        + candidate.name
+                        + "->"
+                        + ",".join(ambiguous_matches)
+                    )
+                else:
+                    validation_notes.append("single-object-handoff:model-match-unresolved:" + candidate.name)
+                return default_plate_object, validation_notes, "single-plate-object"
+
+            if resolution_strategy in ("fuzzy-root", "contained-root"):
+                validation_notes.append(
+                    f"model-resolution:{candidate.name}->{resolved_model_name}:{resolution_strategy}"
+                )
+
+            resolved_plate_objects.append(
+                (
+                    candidate.name,
+                    resolved_model_name,
+                    candidate.center_x,
+                    candidate.center_y,
+                    candidate.rotation_deg or 0.0,
+                )
+            )
+
+    validation_notes.append(f"multi-object-handoff:{len(resolved_plate_objects)}-objects")
+    return resolved_plate_objects, validation_notes, "multi-object-batch"
+
+
+def resolve_stage2_object_transform(gcode_lines, ranked_candidates=None):
     """Resolve Stage 2 transform (center + rotation) from hints and printable-window motion."""
     process_start, process_end, _reason = detect_machine_print_window(gcode_lines)
     hint_x, hint_y, hint_rotation, hint_source = _extract_transform_hints_from_gcode(gcode_lines)
+    selected_candidate, selection_notes = _select_stage2_object_metadata_candidate(
+        gcode_lines,
+        process_start,
+        process_end,
+        ranked_candidates=ranked_candidates,
+    )
     inferred = _infer_xy_center_from_gcode_window(gcode_lines, process_start, process_end)
+    notes = []
+    confidence_score = None
+    ambiguity_markers = ()
 
     if hint_x is not None and hint_y is not None:
         center_x = hint_x
         center_y = hint_y
         source = hint_source or "hint"
+        confidence_score = 1.0
+    elif selected_candidate is not None:
+        center_x = selected_candidate.center_x
+        center_y = selected_candidate.center_y
+        source = selected_candidate.source_family
+        confidence_score = selected_candidate.score
+        ambiguity_markers = selected_candidate.ambiguity_markers
+        notes.extend(selection_notes)
     elif inferred is not None:
         center_x = inferred["center_x"]
         center_y = inferred["center_y"]
         source = "inferred-window-bounds"
+        confidence_score = 0.40
+        notes.extend(selection_notes)
     else:
         center_x = 0.0
         center_y = 0.0
         source = "default-origin"
+        confidence_score = 0.0
+        notes.extend(selection_notes)
+        notes.append("center-defaulted-to-origin")
 
-    return {
-        "center_x": float(center_x),
-        "center_y": float(center_y),
-        "rotation_deg": float(hint_rotation) if hint_rotation is not None else 0.0,
-        "source": source,
-        "window_start": process_start,
-        "window_end": process_end,
-        "inferred_bounds": inferred["bounds"] if inferred is not None else None,
-    }
+    if hint_rotation is not None:
+        rotation_deg = float(hint_rotation)
+    elif selected_candidate is not None and selected_candidate.rotation_deg is not None:
+        rotation_deg = float(selected_candidate.rotation_deg)
+        if hint_x is not None and hint_y is not None:
+            notes.extend(selection_notes)
+            notes.append(f"rotation-from-{selected_candidate.source_family}")
+    else:
+        notes.append("rotation-defaulted-to-zero")
+        rotation_deg = 0.0
+
+    return Stage2ObjectTransform(
+        center_x=float(center_x),
+        center_y=float(center_y),
+        rotation_deg=rotation_deg,
+        source=source,
+        window_start=process_start,
+        window_end=process_end,
+        inferred_bounds=(
+            selected_candidate.inferred_bounds
+            if selected_candidate is not None
+            else (inferred["bounds"] if inferred is not None else None)
+        ),
+        metadata_family=_stage2_metadata_family_from_source(source),
+        confidence_score=confidence_score,
+        ambiguity_markers=ambiguity_markers,
+        notes=tuple(notes),
+    )
 
 
 def _prime_stage1_state(lines, process_start):
@@ -763,6 +1731,7 @@ def _prime_stage1_feedrate(lines, process_start):
                 current_feedrate = feedrate
     return current_feedrate
 
+
 def restore_from_backup(gcode_file, backup_file):
     """Restore G-code from backup if processing failed."""
     try:
@@ -797,12 +1766,111 @@ def _hash_file(file_path):
     return h.hexdigest()
 
 
+def _selected_stage2_object_name(selected_model, stage2_object_transform):
+    if isinstance(stage2_object_transform, Stage2ObjectTransform):
+        notes = stage2_object_transform.notes
+    elif isinstance(stage2_object_transform, dict):
+        notes = stage2_object_transform.get("notes") or ()
+    else:
+        notes = ()
+
+    for note in notes:
+        if isinstance(note, str) and note.startswith("selected-object:"):
+            return note.split(":", 1)[1]
+    return selected_model
+
+
+def build_stage2_execution_contract_metadata(
+    selected_model,
+    stage2_object_transform=None,
+    stage2_plate_objects=None,
+    handoff_mode=None,
+    validation_notes=None,
+):
+    placement_semantics = {
+        "rotation_pivot": "mesh-bounding-box-center",
+        "xy_anchor": "bounding-box-center",
+        "z_anchor": "min-z-to-build-plate",
+    }
+    execution_contract = {
+        "public_handoff_mode": handoff_mode or "single-plate-object",
+        "internal_dispatch_contract": "list-or-legacy-single-tuple",
+        "object_switching_markers": ["EXCLUDE_OBJECT_START", "EXCLUDE_OBJECT_END"],
+        "multi_object_dispatch_ready": True,
+        "placement_semantics": placement_semantics,
+        "validation_notes": list(validation_notes or ()),
+        "selected_plate_objects": [],
+    }
+
+    if stage2_plate_objects:
+        for plate_object in stage2_plate_objects:
+            if len(plate_object) == 5:
+                object_name, model_name, center_x, center_y, rotation_deg = plate_object
+            elif len(plate_object) == 4:
+                model_name, center_x, center_y, rotation_deg = plate_object
+                object_name = model_name
+            else:
+                model_name, center_x, center_y = plate_object
+                object_name = model_name
+                rotation_deg = 0.0
+            execution_contract["selected_plate_objects"].append(
+                {
+                    "object_name": object_name,
+                    "model_name": model_name,
+                    "center_x": float(center_x),
+                    "center_y": float(center_y),
+                    "rotation_deg": float(rotation_deg),
+                }
+            )
+        return execution_contract
+
+    if isinstance(stage2_object_transform, Stage2ObjectTransform):
+        execution_contract["selected_plate_objects"].append(
+            {
+                "object_name": _selected_stage2_object_name(selected_model, stage2_object_transform),
+                "model_name": selected_model,
+                "center_x": float(stage2_object_transform.center_x),
+                "center_y": float(stage2_object_transform.center_y),
+                "rotation_deg": float(stage2_object_transform.rotation_deg),
+                "source": stage2_object_transform.source,
+                "metadata_family": stage2_object_transform.metadata_family,
+                "window_start": int(stage2_object_transform.window_start),
+                "window_end": int(stage2_object_transform.window_end),
+            }
+        )
+    elif isinstance(stage2_object_transform, dict):
+        center_x = stage2_object_transform.get("center_x")
+        center_y = stage2_object_transform.get("center_y")
+        rotation_deg = stage2_object_transform.get("rotation_deg")
+        if center_x is not None and center_y is not None and rotation_deg is not None:
+            execution_contract["selected_plate_objects"].append(
+                {
+                    "object_name": _selected_stage2_object_name(selected_model, stage2_object_transform),
+                    "model_name": selected_model,
+                    "center_x": float(center_x),
+                    "center_y": float(center_y),
+                    "rotation_deg": float(rotation_deg),
+                    "source": stage2_object_transform.get("source"),
+                    "metadata_family": stage2_object_transform.get("metadata_family"),
+                    "window_start": stage2_object_transform.get("window_start"),
+                    "window_end": stage2_object_transform.get("window_end"),
+                }
+            )
+
+    return execution_contract
+
+
 def build_stage2_metadata(
     gcode_lines,
     selected_model,
     stage2_input_sha256,
     stage2_output_sha256,
     stage2_object_transform=None,
+    stage2_object_metadata_candidates=None,
+    stage2_ranked_object_candidates=None,
+    stage2_runtime_env_snapshot=None,
+    stage2_elapsed_seconds=None,
+    stage2_execution_contract=None,
 ):
     ironing_ranges = detect_ironing_sections(gcode_lines)
     contour_markers = []
@@ -810,18 +1878,57 @@ def build_stage2_metadata(
         if line.startswith(";RESET_Z") or "_CONTOUR" in line:
             contour_markers.append(idx)
 
-    return {
+    if isinstance(stage2_object_transform, Stage2ObjectTransform):
+        serialized_transform = stage2_object_transform.as_metadata_dict()
+    else:
+        serialized_transform = stage2_object_transform
+
+    serialized_candidates = []
+    for candidate in stage2_object_metadata_candidates or []:
+        if isinstance(candidate, Stage2ObjectMetadata):
+            serialized_candidates.append(candidate.as_metadata_dict())
+        else:
+            serialized_candidates.append(candidate)
+
+    serialized_ranked_candidates = []
+    for candidate in stage2_ranked_object_candidates or []:
+        if isinstance(candidate, Stage2RankedObjectCandidate):
+            serialized_ranked_candidates.append(candidate.as_metadata_dict())
+        else:
+            serialized_ranked_candidates.append(candidate)
+
+    if stage2_execution_contract is None:
+        serialized_execution_contract = build_stage2_execution_contract_metadata(
+            selected_model,
+            stage2_object_transform,
+        )
+    else:
+        serialized_execution_contract = stage2_execution_contract
+
+    metadata = {
         "schema_version": 1,
         "stage": "stage_2",
         "generated_unix": time.time(),
         "selected_model": selected_model,
-        "stage2_object_transform": stage2_object_transform,
+        "stage2_object_transform": serialized_transform,
+        "stage2_object_transform_schema_version": 1,
+        "stage2_execution_contract": serialized_execution_contract,
+        "stage2_execution_contract_schema_version": 1,
+        "stage2_object_metadata_candidates": serialized_candidates,
+        "stage2_ranked_object_candidates": serialized_ranked_candidates,
         "stage2_input_sha256": stage2_input_sha256,
         "stage2_output_sha256": stage2_output_sha256,
         "line_count": len(gcode_lines),
         "ironing_ranges": ironing_ranges,
         "contour_marker_lines": contour_markers,
     }
+
+    if stage2_runtime_env_snapshot is not None:
+        metadata["stage2_runtime_env_snapshot"] = stage2_runtime_env_snapshot
+    if stage2_elapsed_seconds is not None:
+        metadata["stage2_elapsed_seconds"] = float(stage2_elapsed_seconds)
+
+    return metadata
 
 
 def write_sidecar_metadata(gcode_file, metadata):
@@ -869,6 +1976,14 @@ def validate_sidecar_metadata(gcode_file, metadata, check_stage2_file_hash=True)
 
     if metadata.get("schema_version") != 1:
         return False, f"unsupported schema_version={metadata.get('schema_version')}"
+
+    stage2_transform = metadata.get("stage2_object_transform")
+    if stage2_transform is not None and not isinstance(stage2_transform, dict):
+        return False, "stage2_object_transform must be a mapping when present"
+
+    stage2_execution_contract = metadata.get("stage2_execution_contract")
+    if stage2_execution_contract is not None and not isinstance(stage2_execution_contract, dict):
+        return False, "stage2_execution_contract must be a mapping when present"
 
     if check_stage2_file_hash and not sidecar_hash_matches_file(gcode_file, metadata, "stage2_output_sha256"):
         return False, "stage2_output_sha256 does not match current G-code file"
@@ -1374,8 +2489,10 @@ if __name__ == "__main__":
         if GCODEZAA_AVAILABLE:
             logging.info("[PIPELINE] Stage 2: GCodeZAA Full Surface Raycasting + Z-Compensation")
             try:
+                stage2_runtime_env_snapshot = build_stage2_runtime_env_snapshot()
+                stage2_start_time = time.time()
                 logging.info(
-                    f"[GCodeZAA] Stage 2 runtime env: {build_stage2_runtime_env_snapshot()}"
+                    f"[GCodeZAA] Stage 2 runtime env: {stage2_runtime_env_snapshot}"
                 )
 
                 model_dir = os.path.join(script_dir, "stl_models")
@@ -1386,7 +2503,8 @@ if __name__ == "__main__":
                     stage_status["stage_2"] = "SKIPPED (model dir missing)"
                     remove_sidecar_metadata(gcode_file)
                 else:
-                    selected_model = select_primary_stl_model(model_dir)
+                    available_stl_models = list_stl_models(model_dir)
+                    selected_model = available_stl_models[0] if available_stl_models else None
                     if not selected_model:
                         logging.warning(f"[GCodeZAA] Stage 2 skipped: no STL files found in {model_dir}")
                         logging.info("[PIPELINE] Stage 2 Skipped (Optional)")
@@ -1398,23 +2516,34 @@ if __name__ == "__main__":
                         with open(gcode_file, 'r', encoding='utf-8') as f:
                             gcode_lines = f.readlines()
 
-                        stage2_transform = resolve_stage2_object_transform(gcode_lines)
-                        plate_object = (
-                            selected_model,
-                            stage2_transform["center_x"],
-                            stage2_transform["center_y"],
-                            stage2_transform["rotation_deg"],
+                        stage2_object_metadata_candidates = extract_stage2_object_metadata(gcode_lines)
+                        process_start, process_end, _process_reason = detect_machine_print_window(gcode_lines)
+                        stage2_ranked_object_candidates, _stage2_unresolved_candidates = _rank_stage2_object_metadata_candidates(
+                            gcode_lines,
+                            process_start,
+                            process_end,
                         )
+                        stage2_transform = resolve_stage2_object_transform(
+                            gcode_lines,
+                            ranked_candidates=stage2_ranked_object_candidates,
+                        )
+                        stage2_plate_objects, stage2_dispatch_notes, stage2_handoff_mode = resolve_stage2_plate_objects(
+                            selected_model,
+                            stage2_transform,
+                            stage2_ranked_object_candidates,
+                            available_models=available_stl_models,
+                        )
+                        plate_object = stage2_plate_objects if len(stage2_plate_objects) > 1 else stage2_plate_objects[0]
                         if (
-                            abs(stage2_transform["rotation_deg"]) <= 1e-9
-                            and stage2_transform["source"] in ("inferred-window-bounds", "default-origin")
+                            abs(stage2_transform.rotation_deg) <= 1e-9
+                            and stage2_transform.source in ("inferred-window-bounds", "default-origin")
                         ):
                             logging.warning(
                                 "[GCodeZAA] No explicit object rotation metadata found; defaulting to 0.0deg. "
                                 "For rotated models, add '; ZAA_OBJECT_ROTATION_DEG: <deg>' (and optional "
                                 "'; ZAA_OBJECT_POSITION: x,y') or provide EXCLUDE_OBJECT_DEFINE ROTATION."
                             )
-                        if stage2_transform["source"] == "default-origin":
+                        if stage2_transform.source == "default-origin":
                             logging.warning(
                                 "[GCodeZAA] Could not infer object center from printable window; using origin "
                                 "(0,0). Consider adding '; ZAA_OBJECT_POSITION: x,y' for reliable alignment."
@@ -1422,9 +2551,41 @@ if __name__ == "__main__":
                         invalidate_stale_sidecar(gcode_file, stage2_input_sha)
 
                         logging.info(
-                            f"[GCodeZAA] Using STL model '{selected_model}' for surface raycasting "
-                            f"at center=({stage2_transform['center_x']:.3f}, {stage2_transform['center_y']:.3f}) "
-                            f"rotation={stage2_transform['rotation_deg']:.3f}deg source={stage2_transform['source']}"
+                            f"[GCodeZAA] Stage 2 transform: model='{selected_model}' {stage2_transform.summary()}"
+                        )
+                        logging.debug(
+                            "[GCodeZAA] Stage 2 transform detail: inferred_bounds=%s notes=%s",
+                            stage2_transform.inferred_bounds,
+                            list(stage2_transform.notes),
+                        )
+                        if stage2_object_metadata_candidates:
+                            logging.info(
+                                "[GCodeZAA] Stage 2 object metadata candidates: %s",
+                                ", ".join(
+                                    f"{candidate.name}[{candidate.source_family}]"
+                                    for candidate in stage2_object_metadata_candidates
+                                ),
+                            )
+                            logging.debug(
+                                "[GCodeZAA] Stage 2 object metadata detail: %s",
+                                [candidate.as_metadata_dict() for candidate in stage2_object_metadata_candidates],
+                            )
+                        if stage2_ranked_object_candidates:
+                            logging.info(
+                                "[GCodeZAA] Stage 2 ranked candidates: %s",
+                                ", ".join(
+                                    f"{candidate.name}:{candidate.score:.3f}/{candidate.center_source}"
+                                    for candidate in stage2_ranked_object_candidates
+                                ),
+                            )
+                            logging.debug(
+                                "[GCodeZAA] Stage 2 ranked candidate detail: %s",
+                                [candidate.as_metadata_dict() for candidate in stage2_ranked_object_candidates],
+                            )
+                        logging.info(
+                            "[GCodeZAA] Stage 2 handoff mode: %s (%s)",
+                            stage2_handoff_mode,
+                            ", ".join(stage2_dispatch_notes) if stage2_dispatch_notes else "no additional notes",
                         )
                         enhanced_gcode = gcodezaa_process(gcode_lines, model_dir, plate_object)
 
@@ -1439,6 +2600,17 @@ if __name__ == "__main__":
                             stage2_input_sha,
                             stage2_output_sha,
                             stage2_object_transform=stage2_transform,
+                            stage2_object_metadata_candidates=stage2_object_metadata_candidates,
+                            stage2_ranked_object_candidates=stage2_ranked_object_candidates,
+                            stage2_runtime_env_snapshot=stage2_runtime_env_snapshot,
+                            stage2_elapsed_seconds=time.time() - stage2_start_time,
+                            stage2_execution_contract=build_stage2_execution_contract_metadata(
+                                selected_model,
+                                stage2_transform,
+                                stage2_plate_objects=stage2_plate_objects,
+                                handoff_mode=stage2_handoff_mode,
+                                validation_notes=stage2_dispatch_notes,
+                            ),
                         )
 
                         sidecar_path = write_sidecar_metadata(gcode_file, stage2_metadata)

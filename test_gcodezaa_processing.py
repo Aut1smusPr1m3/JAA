@@ -5,9 +5,13 @@ import sys
 
 sys.path.insert(0, "GCodeZAA")
 
+from gcodezaa import process
+from gcodezaa.process import PlateObjectSpec
 from gcodezaa.process import process_gcode
 from gcodezaa.process import _detect_line_type_from_line
+from gcodezaa.process import _normalize_plate_object_specs
 from gcodezaa.process import _prime_context_state_for_line
+from gcodezaa.process import _summarize_mesh_placement
 from gcodezaa.context import ProcessorContext
 from gcodezaa.slicer_syntax import Slicer, SlicerSyntax
 
@@ -131,3 +135,346 @@ def test_prime_context_state_absolute_arc_sets_position():
     assert abs(ctx.last_p[0] - 5.0) < 1e-9
     assert abs(ctx.last_p[1] - 6.0) < 1e-9
     assert abs(ctx.last_p[2] - 0.2) < 1e-9
+
+
+def test_summarize_mesh_placement_anchors_xy_center_and_min_z():
+    summary = _summarize_mesh_placement((0.0, 10.0, 2.5), (20.0, 30.0, 8.5), 110.0, 210.0)
+
+    assert summary["center"] == (10.0, 20.0, 5.5)
+    assert summary["translation"] == (100.0, 190.0, -2.5)
+    assert summary["spans"] == (20.0, 20.0, 6.0)
+    assert summary["xy_anchor"] == "bounding-box-center"
+    assert summary["z_anchor"] == "min-z-to-build-plate"
+    assert summary["target_xy"] == (110.0, 210.0)
+
+
+def test_normalize_plate_object_specs_preserves_legacy_single_tuple_contract():
+    specs = _normalize_plate_object_specs(("benchy.stl", 100.0, 200.0, 45.0))
+
+    assert specs == [PlateObjectSpec("benchy.stl", "benchy.stl", 100.0, 200.0, 45.0)]
+
+
+def test_normalize_plate_object_specs_accepts_multi_object_shared_stl_contract():
+    specs = _normalize_plate_object_specs(
+        [
+            ("cube_0", "cube.stl", 10.0, 20.0, 0.0),
+            ("cube_1", "cube.stl", 30.0, 40.0, 90.0),
+        ]
+    )
+
+    assert specs == [
+        PlateObjectSpec("cube_0", "cube.stl", 10.0, 20.0, 0.0),
+        PlateObjectSpec("cube_1", "cube.stl", 30.0, 40.0, 90.0),
+    ]
+
+
+def test_load_object_uses_pre_rotation_center_and_post_rotation_translation(monkeypatch):
+    class _FakeScalar(float):
+        def item(self):
+            return float(self)
+
+    class _FakeVector:
+        def __init__(self, coords):
+            self.coords = tuple(float(coord) for coord in coords)
+
+        def __add__(self, other):
+            return _FakeVector(a + b for a, b in zip(self.coords, other.coords))
+
+        def __sub__(self, other):
+            return _FakeVector(a - b for a, b in zip(self.coords, other.coords))
+
+        def __truediv__(self, value):
+            return _FakeVector(coord / value for coord in self.coords)
+
+        def __getitem__(self, idx):
+            return _FakeScalar(self.coords[idx])
+
+        def __iter__(self):
+            return iter(_FakeScalar(coord) for coord in self.coords)
+
+        def as_tuple(self):
+            return self.coords
+
+    class _FakePositions:
+        dtype = "float32"
+        device = "CPU:0"
+
+    class _FakeMesh:
+        def __init__(self):
+            self.vertex = {"positions": _FakePositions()}
+            self.rotations = []
+            self.translations = []
+            self.rotation_center = None
+            self.min_bound = _FakeVector((0.0, 10.0, 2.0))
+            self.max_bound = _FakeVector((20.0, 30.0, 8.0))
+
+        def get_min_bound(self):
+            return self.min_bound
+
+        def get_max_bound(self):
+            return self.max_bound
+
+        def rotate(self, rotation_tensor, center):
+            self.rotations.append(rotation_tensor)
+            self.rotation_center = tuple(float(component.item()) for component in center)
+
+        def translate(self, vector):
+            self.translations.append(tuple(float(component) for component in vector))
+
+        def to(self, _device):
+            return self
+
+    class _FakeRaycastingScene:
+        def __init__(self, device=None):
+            self.device = device
+            self.meshes = []
+
+        def add_triangles(self, mesh):
+            self.meshes.append(mesh)
+
+    fake_mesh = _FakeMesh()
+    fake_open3d = type(
+        "FakeOpen3D",
+        (),
+        {
+            "t": type(
+                "FakeTensorNamespace",
+                (),
+                {
+                    "io": type(
+                        "FakeIO",
+                        (),
+                        {"read_triangle_mesh": staticmethod(lambda *_args, **_kwargs: fake_mesh)},
+                    ),
+                    "geometry": type("FakeGeometry", (), {"RaycastingScene": _FakeRaycastingScene}),
+                },
+            ),
+            "core": type(
+                "FakeCore",
+                (),
+                {"Tensor": staticmethod(lambda data, **_kwargs: data)},
+            ),
+        },
+    )
+
+    monkeypatch.setattr(process, "open3d", fake_open3d)
+    monkeypatch.setattr(process, "make_raycast_device", lambda: ("CPU:0", "CPU:0"))
+
+    ctx = ProcessorContext([], ".")
+    scene, device = process.load_object(ctx, "benchy.stl", 100.0, 200.0, rotation_deg=45.0)
+
+    assert scene.meshes == [fake_mesh]
+    assert device == "CPU:0"
+    assert fake_mesh.rotation_center == (10.0, 20.0, 5.0)
+    assert fake_mesh.translations == [(90.0, 180.0, -2.0)]
+
+
+def test_process_gcode_preloads_multi_object_specs_and_switches_active_object(monkeypatch):
+    loaded_calls = []
+
+    def _fake_load_object(_ctx, model_name, x, y, rotation_deg=0.0):
+        loaded_calls.append((model_name, x, y, rotation_deg))
+        object_key = f"{model_name}@{x:.1f},{y:.1f},{rotation_deg:.1f}"
+        return f"scene:{object_key}", f"device:{object_key}"
+
+    class _FakeSurfaceAnalyzer:
+        instances = []
+
+        def __init__(self, scene=None, device=None):
+            self._scene = scene
+            self._device = device
+            self.scene_history = [scene]
+            self.device_history = [device]
+            self.normal_history = []
+            self.last_surface_z = 0.0
+            self.last_normal = (0.0, 0.0, 1.0)
+            self.ray_cache = {}
+            self.instances.append(self)
+
+        @property
+        def scene(self):
+            return self._scene
+
+        @scene.setter
+        def scene(self, value):
+            self._scene = value
+            self.scene_history.append(value)
+
+        @property
+        def device(self):
+            return self._device
+
+        @device.setter
+        def device(self, value):
+            self._device = value
+            self.device_history.append(value)
+
+    monkeypatch.setattr(process, "load_object", _fake_load_object)
+    monkeypatch.setattr(process, "SurfaceAnalyzer", _FakeSurfaceAnalyzer)
+
+    gcode = [
+        "; EXECUTABLE_BLOCK_START\n",
+        "EXCLUDE_OBJECT_START NAME=cube_0\n",
+        "EXCLUDE_OBJECT_END\n",
+        "EXCLUDE_OBJECT_START NAME=cube_1\n",
+        "EXCLUDE_OBJECT_END\n",
+        "; EXECUTABLE_BLOCK_END\n",
+    ]
+
+    result = process_gcode(
+        gcode,
+        ".",
+        plate_object=[
+            ("cube_0", "cube.stl", 10.0, 20.0, 0.0),
+            ("cube_1", "cube.stl", 30.0, 40.0, 90.0),
+        ],
+    )
+
+    assert result == gcode
+    assert loaded_calls == [
+        ("cube.stl", 10.0, 20.0, 0.0),
+        ("cube.stl", 30.0, 40.0, 90.0),
+    ]
+    analyzer = _FakeSurfaceAnalyzer.instances[-1]
+    assert analyzer.scene_history == [None, "scene:cube.stl@10.0,20.0,0.0", None, "scene:cube.stl@30.0,40.0,90.0", None]
+
+
+def test_process_gcode_reuses_preloaded_objects_when_define_lines_match(monkeypatch):
+    loaded_calls = []
+
+    def _fake_load_object(_ctx, model_name, x, y, rotation_deg=0.0):
+        loaded_calls.append((model_name, x, y, rotation_deg))
+        object_key = f"{model_name}@{x:.1f},{y:.1f},{rotation_deg:.1f}"
+        return f"scene:{object_key}", f"device:{object_key}"
+
+    class _FakeSurfaceAnalyzer:
+        def __init__(self, scene=None, device=None):
+            self.scene = scene
+            self.device = device
+            self.normal_history = []
+            self.last_surface_z = 0.0
+            self.last_normal = (0.0, 0.0, 1.0)
+            self.ray_cache = {}
+
+    monkeypatch.setattr(process, "load_object", _fake_load_object)
+    monkeypatch.setattr(process, "SurfaceAnalyzer", _FakeSurfaceAnalyzer)
+
+    gcode = [
+        "; EXECUTABLE_BLOCK_START\n",
+        "EXCLUDE_OBJECT_DEFINE NAME=cube_0 CENTER=10,20\n",
+        "EXCLUDE_OBJECT_DEFINE NAME=cube_1 CENTER=30,40\n",
+        "; EXECUTABLE_BLOCK_END\n",
+    ]
+
+    process_gcode(
+        gcode,
+        ".",
+        plate_object=[
+            ("cube_0", "cube.stl", 10.0, 20.0, 0.0),
+            ("cube_1", "cube.stl", 30.0, 40.0, 90.0),
+        ],
+    )
+
+    assert loaded_calls == [
+        ("cube.stl", 10.0, 20.0, 0.0),
+        ("cube.stl", 30.0, 40.0, 90.0),
+    ]
+
+
+def test_process_gcode_arranged_plate_routes_surface_following_per_active_object(monkeypatch):
+    loaded_calls = []
+    contour_scenes = []
+
+    def _fake_load_object(_ctx, model_name, x, y, rotation_deg=0.0):
+        loaded_calls.append((model_name, x, y, rotation_deg))
+        object_key = f"{model_name}@{x:.1f},{y:.1f},{rotation_deg:.1f}"
+        return f"scene:{object_key}", f"device:{object_key}"
+
+    class _FakeSurfaceAnalyzer:
+        instances = []
+
+        def __init__(self, scene=None, device=None):
+            self._scene = scene
+            self._device = device
+            self.scene_snapshots = [(scene, 0, 0)]
+            self.analyze_calls = []
+            self.normal_history = []
+            self.last_surface_z = 0.0
+            self.last_normal = (0.0, 0.0, 1.0)
+            self.ray_cache = {}
+            self.instances.append(self)
+
+        @property
+        def scene(self):
+            return self._scene
+
+        @scene.setter
+        def scene(self, value):
+            self.scene_snapshots.append((value, len(self.normal_history), len(self.ray_cache)))
+            self._scene = value
+
+        @property
+        def device(self):
+            return self._device
+
+        @device.setter
+        def device(self, value):
+            self._device = value
+
+        def analyze_segment_batch(self, *args, **kwargs):
+            self.analyze_calls.append(self.scene)
+            self.normal_history.append(((0.0, 0.0, 1.0), 1.0))
+            self.ray_cache[f"call-{len(self.analyze_calls)}"] = True
+            return []
+
+    def _fake_contour_z(self, scene, z, height, ironing_line, outer_line, resolution=0.1, demo_split=None):
+        contour_scenes.append(scene)
+        return [self]
+
+    monkeypatch.setattr(process, "load_object", _fake_load_object)
+    monkeypatch.setattr(process, "SurfaceAnalyzer", _FakeSurfaceAnalyzer)
+    monkeypatch.setattr(process.Extrusion, "contour_z", _fake_contour_z)
+    monkeypatch.setattr(process, "ZAA_NONPLANAR_IRONING", False)
+
+    gcode = [
+        "G90\n",
+        "G92 X0 Y0 Z0.2 E0\n",
+        "; EXECUTABLE_BLOCK_START\n",
+        "EXCLUDE_OBJECT_START NAME=cube_0\n",
+        "G1 X10 Y0 Z0.2 E0.1 ; outer wall\n",
+        "EXCLUDE_OBJECT_END\n",
+        "EXCLUDE_OBJECT_START NAME=cube_1\n",
+        "G1 X20 Y0 Z0.2 E0.2 ; outer wall\n",
+        "EXCLUDE_OBJECT_END\n",
+        "; EXECUTABLE_BLOCK_END\n",
+    ]
+
+    process_gcode(
+        gcode,
+        ".",
+        plate_object=[
+            ("cube_0", "cube.stl", 10.0, 20.0, 0.0),
+            ("cube_1", "cube.stl", 30.0, 40.0, 90.0),
+        ],
+    )
+
+    assert loaded_calls == [
+        ("cube.stl", 10.0, 20.0, 0.0),
+        ("cube.stl", 30.0, 40.0, 90.0),
+    ]
+    analyzer = _FakeSurfaceAnalyzer.instances[-1]
+    assert analyzer.analyze_calls == [
+        "scene:cube.stl@10.0,20.0,0.0",
+        "scene:cube.stl@30.0,40.0,90.0",
+    ]
+    assert contour_scenes == [
+        "scene:cube.stl@10.0,20.0,0.0",
+        "scene:cube.stl@30.0,40.0,90.0",
+    ]
+    assert analyzer.scene_snapshots == [
+        (None, 0, 0),
+        ("scene:cube.stl@10.0,20.0,0.0", 0, 0),
+        (None, 0, 0),
+        ("scene:cube.stl@30.0,40.0,90.0", 0, 0),
+        (None, 0, 0),
+    ]

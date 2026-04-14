@@ -14,6 +14,7 @@ This documentation matches the current repository behavior.
 - FAQ: [FAQ](04-reference/faq.md)
 - Dependency licenses: [Dependency license inventory](04-reference/dependency-licenses.md)
 - Developer workflow: [Testing](03-development/testing.md)
+- Optimizer overhaul planning: [Planning pack](03-development/optimizer-overhaul/index.md)
 - Release packaging: [Windows AIO release](03-development/release-aio.md)
 - Release compliance: [License compliance checklist](03-development/license-compliance.md)
 - Installer review: [Windows bootstrap audit](03-development/windows-bootstrap-audit.md)

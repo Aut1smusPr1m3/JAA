@@ -39,6 +39,22 @@ def test_detect_machine_print_window_uses_print_object_markers():
     assert (start, end, reason) == (1, 3, "printing-object-comments")
 
 
+def test_detect_machine_print_window_spans_multiple_print_objects_today():
+    lines = [
+        ";start\n",
+        "; printing object foo\n",
+        "G1 X1 Y1\n",
+        "; stop printing object foo\n",
+        "; printing object bar\n",
+        "G1 X2 Y2\n",
+        "; stop printing object bar\n",
+        ";end\n",
+    ]
+
+    start, end, reason = detect_machine_print_window(lines)
+    assert (start, end, reason) == (1, 6, "printing-object-comments")
+
+
 def test_gcodezaa_window_detector_matches_print_object_behavior():
     lines = [
         ";start\n",

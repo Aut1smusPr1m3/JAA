@@ -7,6 +7,7 @@ import os
 import re
 import math
 import logging
+from dataclasses import dataclass
 
 try:
     import open3d
@@ -26,6 +27,139 @@ INLINE_FEATURE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^\s*infill\b", re.IGNORECASE), "infill"),
     (re.compile(r"^\s*perimeter\b", re.IGNORECASE), "perimeter"),
 ]
+
+
+@dataclass(frozen=True)
+class PlateObjectSpec:
+    object_name: str
+    model_name: str
+    center_x: float
+    center_y: float
+    rotation_deg: float = 0.0
+
+
+def _as_float_xyz(values) -> tuple[float, float, float]:
+    normalized = []
+    for value in values:
+        normalized.append(float(value.item() if hasattr(value, "item") else value))
+    return tuple(normalized)
+
+
+def _summarize_mesh_placement(min_bound, max_bound, target_x: float, target_y: float) -> dict:
+    """Describe the current Stage 2 mesh-placement contract for a model.
+
+    Semantics:
+    - XY placement anchors the mesh's current bounding-box center to the requested target.
+    - Z placement anchors the mesh's current minimum Z to build-plate zero.
+    - Rotation, when applied, happens before this summary is recomputed.
+    """
+    min_x, min_y, min_z = _as_float_xyz(min_bound)
+    max_x, max_y, max_z = _as_float_xyz(max_bound)
+    center_x = min_x + ((max_x - min_x) / 2.0)
+    center_y = min_y + ((max_y - min_y) / 2.0)
+    center_z = min_z + ((max_z - min_z) / 2.0)
+    return {
+        "center": (center_x, center_y, center_z),
+        "translation": (target_x - center_x, target_y - center_y, -min_z),
+        "spans": (max_x - min_x, max_y - min_y, max_z - min_z),
+        "bounds": {
+            "min_x": min_x,
+            "max_x": max_x,
+            "min_y": min_y,
+            "max_y": max_y,
+            "min_z": min_z,
+            "max_z": max_z,
+        },
+        "target_xy": (float(target_x), float(target_y)),
+        "z_anchor": "min-z-to-build-plate",
+        "xy_anchor": "bounding-box-center",
+    }
+
+
+def _plate_object_spec_from_value(value) -> PlateObjectSpec:
+    if isinstance(value, PlateObjectSpec):
+        return value
+
+    if not isinstance(value, tuple):
+        raise TypeError(f"Unsupported plate object spec type: {type(value)!r}")
+
+    if len(value) == 3:
+        model_name, center_x, center_y = value
+        return PlateObjectSpec(str(model_name), str(model_name), float(center_x), float(center_y), 0.0)
+
+    if len(value) == 4:
+        if isinstance(value[1], str):
+            object_name, model_name, center_x, center_y = value
+            return PlateObjectSpec(str(object_name), str(model_name), float(center_x), float(center_y), 0.0)
+        model_name, center_x, center_y, rotation_deg = value
+        return PlateObjectSpec(
+            str(model_name),
+            str(model_name),
+            float(center_x),
+            float(center_y),
+            float(rotation_deg),
+        )
+
+    if len(value) == 5:
+        object_name, model_name, center_x, center_y, rotation_deg = value
+        return PlateObjectSpec(
+            str(object_name),
+            str(model_name),
+            float(center_x),
+            float(center_y),
+            float(rotation_deg),
+        )
+
+    raise ValueError(f"Unsupported plate object spec length: {len(value)}")
+
+
+def _normalize_plate_object_specs(plate_object) -> list[PlateObjectSpec]:
+    if plate_object is None:
+        return []
+
+    if isinstance(plate_object, PlateObjectSpec):
+        return [plate_object]
+
+    if isinstance(plate_object, tuple):
+        return [_plate_object_spec_from_value(plate_object)]
+
+    if isinstance(plate_object, list):
+        return [_plate_object_spec_from_value(value) for value in plate_object]
+
+    raise TypeError(f"Unsupported plate_object container: {type(plate_object)!r}")
+
+
+def _reset_surface_analyzer(surface_analyzer: SurfaceAnalyzer) -> None:
+    surface_analyzer.normal_history = []
+    surface_analyzer.last_surface_z = 0.0
+    surface_analyzer.last_normal = (0.0, 0.0, 1.0)
+    surface_analyzer.ray_cache = {}
+
+
+def _set_active_object(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer, scene, device) -> None:
+    current_scene = getattr(surface_analyzer, "scene", None)
+    if current_scene is not scene:
+        _reset_surface_analyzer(surface_analyzer)
+    ctx.active_object = scene
+    ctx.active_object_device = device
+    surface_analyzer.scene = scene
+    surface_analyzer.device = device
+
+
+def _preload_plate_object_specs(ctx: ProcessorContext, plate_object_specs: list[PlateObjectSpec]) -> list[PlateObjectSpec]:
+    loaded_specs = []
+    for spec in plate_object_specs:
+        scene, device = load_object(
+            ctx,
+            spec.model_name,
+            spec.center_x,
+            spec.center_y,
+            spec.rotation_deg,
+        )
+        ctx.exclude_object[spec.object_name] = scene
+        ctx.exclude_object_device[spec.object_name] = device
+        loaded_specs.append(spec)
+    return loaded_specs
 
 
 def _normalize_line_type(value: str | None) -> str:
@@ -558,23 +692,36 @@ def _build_surface_extrusions(
 def process_gcode(
     gcode: list[str],
     model_dir: str,
-    plate_object: tuple[str, float, float] | tuple[str, float, float, float] | None = None,
+    plate_object: (
+        tuple[str, float, float]
+        | tuple[str, float, float, float]
+        | list[tuple[str, float, float] | tuple[str, float, float, float] | tuple[str, str, float, float] | tuple[str, str, float, float, float] | PlateObjectSpec]
+        | PlateObjectSpec
+        | None
+    ) = None,
 ) -> list[str]:
     ctx = ProcessorContext(gcode, model_dir)
-    if plate_object is not None:
-        rotation_deg = plate_object[3] if len(plate_object) > 3 else 0.0
-        scene, device = load_object(
-            ctx,
-            plate_object[0],
-            plate_object[1],
-            plate_object[2],
-            rotation_deg,
-        )
-        ctx.active_object = scene
-        ctx.active_object_device = device
-    
+    plate_object_specs = _normalize_plate_object_specs(plate_object)
+
     # Initialize surface analysis with batching support
     surface_analyzer = SurfaceAnalyzer(ctx.active_object, ctx.active_object_device)
+
+    if plate_object_specs:
+        loaded_specs = _preload_plate_object_specs(ctx, plate_object_specs)
+        if len(loaded_specs) == 1:
+            only_spec = loaded_specs[0]
+            _set_active_object(
+                ctx,
+                surface_analyzer,
+                ctx.exclude_object[only_spec.object_name],
+                ctx.exclude_object_device[only_spec.object_name],
+            )
+        else:
+            logger.info(
+                "[GCodeZAA] Multi-object dispatch contract enabled for %d preloaded object(s): %s",
+                len(loaded_specs),
+                ", ".join(spec.object_name for spec in loaded_specs),
+            )
 
     process_start, process_end, reason = detect_processing_window(ctx.gcode, ctx.syntax)
     logger.info(
@@ -615,6 +762,7 @@ def load_object(
 
     min_bound = mesh.get_min_bound()
     max_bound = mesh.get_max_bound()
+    pre_rotation_summary = _summarize_mesh_placement(min_bound, max_bound, x, y)
     center = min_bound + (max_bound - min_bound) / 2
 
     if abs(rotation_deg) > 1e-9:
@@ -644,15 +792,24 @@ def load_object(
                 name,
                 exc,
             )
+
+    placement_summary = _summarize_mesh_placement(min_bound, max_bound, x, y)
     
     # Translate mesh to position on build plate
-    mesh.translate([x - center[0].item(), y - center[1].item(), -min_bound[2].item()])
-    
-    x_span = float((max_bound[0] - min_bound[0]).item())
-    y_span = float((max_bound[1] - min_bound[1]).item())
-    z_span = float((max_bound[2] - min_bound[2]).item())
+    mesh.translate(list(placement_summary["translation"]))
+
+    x_span, y_span, z_span = placement_summary["spans"]
     logger.info(
         f"[GCodeZAA] Model bounds: X={x_span:.1f}mm, Y={y_span:.1f}mm, Z={z_span:.1f}mm"
+    )
+    logger.debug(
+        "[GCodeZAA] Placement semantics: pre_rotation_center=%s post_rotation_center=%s translation=%s xy_anchor=%s z_anchor=%s target_xy=%s",
+        pre_rotation_summary["center"],
+        placement_summary["center"],
+        placement_summary["translation"],
+        placement_summary["xy_anchor"],
+        placement_summary["z_anchor"],
+        placement_summary["target_xy"],
     )
 
     mesh = mesh.to(device)
@@ -872,6 +1029,9 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
     elif ctx.line.startswith("EXCLUDE_OBJECT_DEFINE"):
         args = parse_klipper_args(ctx.line.removeprefix("EXCLUDE_OBJECT_DEFINE "))
         name = args["NAME"]
+        if name in ctx.exclude_object:
+            logger.debug("[GCodeZAA] Reusing preloaded object dispatch entry for '%s'", name)
+            return
         x, y = map(float, args["CENTER"].split(","))
 
         scene, device = load_object(
@@ -881,11 +1041,14 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
         ctx.exclude_object_device[name] = device
     elif ctx.line.startswith("EXCLUDE_OBJECT_START"):
         args = parse_klipper_args(ctx.line.removeprefix("EXCLUDE_OBJECT_START "))
-        ctx.active_object = ctx.exclude_object[args["NAME"]]
-        ctx.active_object_device = ctx.exclude_object_device.get(args["NAME"])
+        _set_active_object(
+            ctx,
+            surface_analyzer,
+            ctx.exclude_object[args["NAME"]],
+            ctx.exclude_object_device.get(args["NAME"]),
+        )
     elif ctx.line.startswith("EXCLUDE_OBJECT_END"):
-        ctx.active_object = None
-        ctx.active_object_device = None
+        _set_active_object(ctx, surface_analyzer, None, None)
 
     if (
         len(ctx.extrusion) == 1
@@ -929,7 +1092,7 @@ def process_line(ctx: ProcessorContext, surface_analyzer: SurfaceAnalyzer):
             contour = ctx.extrusion[0].contour_z(
                 ctx.active_object,
                 z=ctx.z,
-                height=float(ctx.config_block["layer_height"]),
+                    height=float(ctx.config_block.get("layer_height", ctx.height)),
                 ironing_line=line_type == ironing_type,
                 outer_line=line_type == outer_wall_type,
                 demo_split=None,
